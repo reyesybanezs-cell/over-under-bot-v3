@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Rastreador Over/Under</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0B1210;
+    --surface: #121B17;
+    --surface-2: #182420;
+    --line: #223129;
+    --text: #E7EDE9;
+    --muted: #7E9A8C;
+    --over: #3ECF7E;
+    --under: #4C8DFF;
+    --warn: #E8A33D;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    margin:0;
+    background: radial-gradient(ellipse at top, #101B16 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    padding: 32px 16px 60px;
+  }
+  main{ width:100%; max-width: 460px; }
+  .marca{
+    display:flex; align-items:baseline; gap:10px; margin-bottom: 6px;
+  }
+  .marca .bola{ font-size: 22px; }
+  h1{
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  p.sub{
+    color: var(--muted);
+    font-size: 14px;
+    margin: 2px 0 28px;
+    line-height:1.5;
+  }
+  button#buscar{
+    width:100%;
+    padding: 16px 20px;
+    border-radius: 12px;
+    border: 1px solid var(--over);
+    background: linear-gradient(180deg, #37B872, #2C9A60);
+    color: #06170F;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    cursor:pointer;
+    transition: transform .12s ease, filter .12s ease;
+  }
+  button#buscar:hover{ filter: brightness(1.06); }
+  button#buscar:active{ transform: scale(0.98); }
+  button#buscar:disabled{
+    background: var(--surface-2);
+    border-color: var(--line);
+    color: var(--muted);
+    cursor: default;
+  }
+  #estadoTexto{
+    margin: 14px 2px 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+    min-height: 18px;
+    line-height:1.5;
+  }
+  .tarjetas{ margin-top: 26px; display:flex; flex-direction:column; gap:14px; }
+  .vacio{
+    border: 1px dashed var(--line);
+    border-radius: 12px;
+    padding: 22px 18px;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height:1.6;
+  }
+  .partido{
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 18px 16px;
+  }
+  .partido .etiqueta{
+    color: var(--muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    margin-bottom: 6px;
+  }
+  .partido h2{
+    font-size: 16.5px;
+    margin: 0 0 4px;
+    font-weight: 700;
+  }
+  .partido .fecha{
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  table.cuotas{
+    width:100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+  }
+  table.cuotas th{
+    text-align:left;
+    color: var(--muted);
+    font-weight: 400;
+    padding: 4px 4px 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  table.cuotas td{
+    padding: 7px 4px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  table.cuotas tr:last-child td{ border-bottom: none; }
+  .over-val{ color: var(--over); }
+  .under-val{ color: var(--under); }
+  .pendiente{ color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <div class="marca">
+    <span class="bola">⚽</span>
+    <h1>Rastreador Over/Under</h1>
+  </div>
+  <p class="sub">Selecciona hasta 3 partidos del día, sigue el movimiento de sus cuotas de goles y recibe la alerta directo en Telegram.</p>
+
+  <button id="buscar">Buscar Partidos y Programar</button>
+  <div id="estadoTexto"></div>
+
+  <div class="tarjetas" id="tarjetas">
+    <div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 3).</div>
+  </div>
+</main>
+
+<script>
+const boton = document.getElementById('buscar');
+const estadoTexto = document.getElementById('estadoTexto');
+const tarjetas = document.getElementById('tarjetas');
+
+const CHECKPOINTS = [
+  { clave: '24h', etiqueta: '24h antes' },
+  { clave: '12h', etiqueta: '12h antes' },
+  { clave: '2h', etiqueta: '2h antes' },
+  { clave: '1h', etiqueta: '1h antes' },
+  { clave: '5m', etiqueta: '5m antes' },
+];
+
+const LINEAS = ['1.5', '2.5', '3.5'];
+
+function formatearFecha(iso){
+  return new Date(iso).toLocaleString('es-ES', { dateStyle:'medium', timeStyle:'short' });
+}
+
+function celda(dato){
+  if (!dato) return '<span class="pendiente">—</span>';
+  return `<span class="over-val">${dato.over}</span>/<span class="under-val">${dato.under}</span>`;
+}
+
+function renderPartido(etiqueta, partido){
+  const filas = CHECKPOINTS.map(cp => {
+    const chequeo = partido.cuotas && partido.cuotas[cp.clave];
+    const lineas = chequeo && chequeo.lineas;
+    const celdas = LINEAS.map(l => `<td>${celda(lineas && lineas[l])}</td>`).join('');
+    return `<tr><td>${cp.etiqueta}</td>${celdas}</tr>`;
+  }).join('');
+
+  return `
+    <div class="partido">
+      <div class="etiqueta">${etiqueta}</div>
+      <h2>${partido.homeTeam} vs ${partido.awayTeam}</h2>
+      <div class="fecha">${formatearFecha(partido.commenceTime)}</div>
+      <table class="cuotas">
+        <thead><tr><th>Chequeo</th><th>1.5 (O/U)</th><th>2.5 (O/U)</th><th>3.5 (O/U)</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function refrescarEstado(){
+  try{
+    const res = await fetch('/api/estado');
+    const db = await res.json();
+    const letras = ['A', 'B', 'C'];
+    const claves = letras.map(l => 'partido' + l).filter(clave => db[clave]);
+
+    if (claves.length === 0){
+      tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 3).</div>';
+      return;
+    }
+    tarjetas.innerHTML = claves.map(clave => renderPartido('Partido ' + clave.slice(-1), db[clave])).join('');
+  }catch(err){
+    console.error('No se pudo obtener el estado:', err);
+  }
+}
+
+boton.addEventListener('click', async () => {
+  boton.disabled = true;
+  boton.textContent = 'Buscando partidos…';
+  estadoTexto.textContent = '';
+  try{
+    const res = await fetch('/api/buscar-partidos', { method: 'POST' });
+    const data = await res.json();
+    estadoTexto.textContent = data.mensaje || (data.ok ? 'Listo.' : 'Ocurrió un error.');
+    await refrescarEstado();
+  }catch(err){
+    estadoTexto.textContent = 'Error de conexión con el servidor.';
+  }finally{
+    boton.disabled = false;
+    boton.textContent = 'Buscar Partidos y Programar';
+  }
+});
+
+refrescarEstado();
+setInterval(refrescarEstado, 30000);
+</script>
+</body>
+</html>
