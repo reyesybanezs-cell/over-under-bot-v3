@@ -171,7 +171,14 @@ function celda(dato){
   return `<span class="over-val">${dato.over}</span>/<span class="under-val">${dato.under}</span>`;
 }
 
-function renderPartido(etiqueta, partido){
+const MESES_CORTO = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function formatearDiaCorto(diaLocal){
+  const [, mes, dia] = diaLocal.split('-').map(Number);
+  return `${dia} ${MESES_CORTO[mes - 1]}`;
+}
+
+function renderPartido(partido){
+  const etiqueta = `Partido ${partido.etiqueta} · ${formatearDiaCorto(partido.diaLocal)}`;
   const filas = CHECKPOINTS.map(cp => {
     const chequeo = partido.cuotas && partido.cuotas[cp.clave];
     const lineas = chequeo && chequeo.lineas;
@@ -195,15 +202,14 @@ function renderPartido(etiqueta, partido){
 async function refrescarEstado(){
   try{
     const res = await fetch('/api/estado');
-    const db = await res.json();
-    const letras = ['A', 'B', 'C'];
-    const claves = letras.map(l => 'partido' + l).filter(clave => db[clave]);
+    const data = await res.json();
+    const partidos = data.partidos || [];
 
-    if (claves.length === 0){
+    if (partidos.length === 0){
       tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 3).</div>';
       return;
     }
-    tarjetas.innerHTML = claves.map(clave => renderPartido('Partido ' + clave.slice(-1), db[clave])).join('');
+    tarjetas.innerHTML = partidos.map(p => renderPartido(p)).join('');
   }catch(err){
     console.error('No se pudo obtener el estado:', err);
   }
