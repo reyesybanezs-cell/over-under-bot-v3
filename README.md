@@ -76,6 +76,11 @@ Para que tu app se mantenga activa 24/7 y no pierda la programación:
 - La decisión sigue basándose en la línea principal, **2.5**, comparando la lectura de las 24h contra la de los 5 minutos.
 - Las líneas 1.5 y 3.5 **no generan alertas propias**: solo se usan para agregar una nota de "✅ confirmado" o "ℹ️ sin confirmación" al único mensaje que se manda por partido.
 
+## Arreglos importantes (líneas 1.5 y solapamiento de días)
+
+- **Línea 1.5 sin datos**: se corrigió pidiendo el mercado `alternate_totals` en vez de `totals`. El mercado `totals` normal solo trae la línea principal de cada casa de apuestas (casi siempre 2.5); `alternate_totals` trae todas las líneas (0.5, 1, 1.5, 2, 2.5, 3, 3.5...) en la misma llamada, sin costo extra de cuota.
+- **Un partido en curso se perdía cuando llegaba la búsqueda automática del día siguiente**: ahora cada partido se guarda con su propio ID único y de forma independiente. Antes de buscar partidos nuevos, el sistema revisa si ya hay partidos programados (sin terminar) para el día que le tocaría elegir, y si es así, simplemente espera — no cancela ni sobreescribe nada. Esto significa que, si un partido queda "cruzado" con la búsqueda automática de otro día (por ejemplo, uno que arranca a las 11:45am y la búsqueda automática es a las 8:00am ese mismo día), no se pierde: sigue rastreándose hasta el final, y recién cuando termina se habilita la búsqueda del siguiente día.
+
 ## Cómo funciona la selección de partidos
 
 - Busca el primer partido que inicie en 24h o más desde el momento de la búsqueda. Ese define "el día" de trabajo.

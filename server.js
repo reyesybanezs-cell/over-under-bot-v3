@@ -70,14 +70,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 function leerDB() {
   if (!fs.existsSync(DB_PATH)) {
-    return {};
+    return { partidos: {} };
   }
   try {
     const contenido = fs.readFileSync(DB_PATH, 'utf-8');
-    return JSON.parse(contenido || '{}');
+    const data = JSON.parse(contenido || '{}');
+    if (!data.partidos) data.partidos = {};
+    return data;
   } catch (err) {
     console.error('Error leyendo database.json:', err.message);
-    return {};
+    return { partidos: {} };
   }
 }
 
@@ -133,10 +135,13 @@ async function obtenerEventosLiga(sportKey) {
 
 // Cuotas Over/Under de un partido específico, para varias líneas de goles
 // (1.5, 2.5, 3.5), promediando entre todas las casas de apuestas.
-// Devuelve algo como: { '1.5': {over, under}, '2.5': {over, under}, '3.5': {over, under} }
-// Si alguna línea no tiene datos suficientes, simplemente no aparece en el objeto.
+// Usamos el mercado "alternate_totals" (no "totals"): el mercado "totals"
+// normal solo trae la línea principal de cada casa (casi siempre 2.5),
+// mientras que "alternate_totals" trae TODAS las líneas que ofrece cada
+// casa (0.5, 1, 1.5, 2, 2.5, 3, 3.5...) en una sola respuesta, con el
+// mismo costo de cuota (1 mercado x 1 región = 1 crédito).
 async function obtenerCuotasTotales(sportKey, eventId) {
-  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=totals&oddsFormat=decimal`;
+  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=alternate_totals&oddsFormat=decimal`;
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -152,7 +157,7 @@ async function obtenerCuotasTotales(sportKey, eventId) {
     }
 
     for (const casa of data.bookmakers || []) {
-      const mercadoTotals = casa.markets.find((m) => m.key === 'totals');
+      const mercadoTotals = casa.markets.find((m) => m.key === 'alternate_totals');
       if (!mercadoTotals) continue;
       for (const outcome of mercadoTotals.outcomes) {
         const claveLinea = String(outcome.point);
@@ -187,13 +192,15 @@ async function obtenerCuotasTotales(sportKey, eventId) {
 // SELECCIÓN DE PARTIDOS
 // ==================================================================
 
-function crearRegistroPartido(evento) {
+function crearRegistroPartido(evento, diaLocal, etiqueta) {
   return {
     id: evento.id,
     sportKey: evento.sportKey,
     homeTeam: evento.home_team,
     awayTeam: evento.away_team,
     commenceTime: evento.commence_time,
+    diaLocal,
+    etiqueta,
     cuotas: {},
     prediccionEnviada: false,
   };
@@ -263,6 +270,27 @@ async function buscarYProgramarPartidos() {
   // día no da para 3, se usan 2; si no da para 2, se usa solo 1.
   const anclaDelDia = candidatosA[0];
   const diaSeleccionado = obtenerDiaLocal(anclaDelDia.commence_time, ZONA_HORARIA);
+
+  // Leemos el estado actual y quitamos los partidos que ya terminaron
+  // (ya mandaron su predicción). Esto es solo "limpieza" del archivo,
+  // nunca toca partidos que sigan en curso.
+  const db = leerDB();
+  Object.keys(db.partidos).forEach((id) => {
+    if (db.partidos[id].prediccionEnviada) delete db.partidos[id];
+  });
+
+  // Si ya hay partidos programados (en curso, sin terminar) para ESE
+  // mismo día, no volvemos a seleccionar nada: evita duplicados y, sobre
+  // todo, evita cancelar/perder el rastreo de partidos que ya estaban
+  // en marcha (este era el bug reportado: la búsqueda de las 8am
+  // reemplazaba un partido que todavía faltaba por chequear ese mismo día).
+  const yaHayEseDia = Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado);
+  if (yaHayEseDia) {
+    const msg = `ℹ️ Ya hay partidos en curso programados para el ${diaSeleccionado}. No se buscan partidos nuevos hasta que esos terminen.`;
+    console.log(msg);
+    return { ok: false, mensaje: msg };
+  }
+
   const eventosDelDia = todosLosEventos.filter(
     (e) =>
       obtenerDiaLocal(e.commence_time, ZONA_HORARIA) === diaSeleccionado &&
@@ -283,25 +311,20 @@ async function buscarYProgramarPartidos() {
     }
   }
 
-  // Cancela cualquier programación anterior antes de crear una nueva
-  trabajosActivos.forEach((job) => job.cancel());
-  trabajosActivos = [];
-
   const LETRAS = ['A', 'B', 'C'];
-  const db = {};
   seleccionados.forEach((evento, i) => {
-    db[`partido${LETRAS[i]}`] = crearRegistroPartido(evento);
+    const registro = crearRegistroPartido(evento, diaSeleccionado, LETRAS[i]);
+    db.partidos[evento.id] = registro;
+    programarChequeos(evento.id, registro);
   });
   guardarDB(db);
-
-  Object.keys(db).forEach((clave) => programarChequeos(clave, db[clave]));
 
   const emojisLetra = { A: '🅰️', B: '🅱️', C: '🇨' };
   const bloques = seleccionados.map(
     (evento, i) =>
       `${emojisLetra[LETRAS[i]]} ${evento.home_team} vs ${evento.away_team}\n🕒 ${formatearFecha(evento.commence_time)}`
   );
-  const mensaje = `✅ ${seleccionados.length} partido(s) programado(s):\n\n${bloques.join('\n\n')}`;
+  const mensaje = `✅ ${seleccionados.length} partido(s) programado(s) para el ${diaSeleccionado}:\n\n${bloques.join('\n\n')}`;
   await enviarTelegram(mensaje);
 
   return { ok: true, mensaje: `${seleccionados.length} partido(s) programado(s) correctamente.`, db };
@@ -311,7 +334,7 @@ async function buscarYProgramarPartidos() {
 // PROGRAMACIÓN DE CHEQUEOS (node-schedule)
 // ==================================================================
 
-function programarChequeos(clavePartido, partido) {
+function programarChequeos(matchId, partido) {
   const tiempoInicio = new Date(partido.commenceTime).getTime();
 
   for (const checkpoint of CHECKPOINTS) {
@@ -321,25 +344,25 @@ function programarChequeos(clavePartido, partido) {
 
     const momentoEjecucion = new Date(tiempoInicio - checkpoint.ms);
     if (momentoEjecucion.getTime() <= Date.now()) {
-      console.log(`⏭️  Checkpoint ${checkpoint.clave} de ${clavePartido} ya pasó, se omite.`);
+      console.log(`⏭️  Checkpoint ${checkpoint.clave} de ${matchId} ya pasó, se omite.`);
       continue;
     }
 
     const job = schedule.scheduleJob(momentoEjecucion, () => {
-      ejecutarChequeo(clavePartido, checkpoint.clave);
+      ejecutarChequeo(matchId, checkpoint.clave);
     });
     trabajosActivos.push(job);
     console.log(
-      `📅 Programado chequeo "${checkpoint.clave}" de ${clavePartido} para ${momentoEjecucion.toLocaleString('es-ES')}`
+      `📅 Programado chequeo "${checkpoint.clave}" de ${partido.homeTeam} vs ${partido.awayTeam} para ${momentoEjecucion.toLocaleString('es-ES')}`
     );
   }
 }
 
-async function ejecutarChequeo(clavePartido, claveCheckpoint) {
+async function ejecutarChequeo(matchId, claveCheckpoint) {
   const db = leerDB();
-  const partido = db[clavePartido];
+  const partido = db.partidos[matchId];
   if (!partido) {
-    console.log(`${clavePartido} ya no existe en la base de datos, se omite el chequeo.`);
+    console.log(`El partido ${matchId} ya no existe en la base de datos, se omite el chequeo.`);
     return;
   }
 
@@ -347,10 +370,10 @@ async function ejecutarChequeo(clavePartido, claveCheckpoint) {
   const lineas = await obtenerCuotasTotales(partido.sportKey, partido.id);
 
   if (!lineas) {
-    console.log(`No se pudieron obtener cuotas para ${clavePartido} (${claveCheckpoint}).`);
+    console.log(`No se pudieron obtener cuotas para ${matchId} (${claveCheckpoint}).`);
   } else {
     partido.cuotas[claveCheckpoint] = { lineas, timestamp: new Date().toISOString() };
-    db[clavePartido] = partido;
+    db.partidos[matchId] = partido;
     guardarDB(db);
     const principal = lineas[LINEA_PRINCIPAL];
     console.log(
@@ -359,7 +382,7 @@ async function ejecutarChequeo(clavePartido, claveCheckpoint) {
   }
 
   if (claveCheckpoint === '5m') {
-    await ejecutarPrediccion(clavePartido);
+    await ejecutarPrediccion(matchId);
   }
 }
 
@@ -371,9 +394,9 @@ function calcularProbabilidadImplicita(cuotaDecimal) {
   return (1 / cuotaDecimal) * 100;
 }
 
-async function ejecutarPrediccion(clavePartido) {
+async function ejecutarPrediccion(matchId) {
   const db = leerDB();
-  const partido = db[clavePartido];
+  const partido = db.partidos[matchId];
   if (!partido) return;
 
   const nombrePartido = `${partido.homeTeam} vs ${partido.awayTeam}`;
@@ -457,7 +480,7 @@ async function ejecutarPrediccion(clavePartido) {
 
   await enviarTelegram(mensaje);
   partido.prediccionEnviada = true;
-  db[clavePartido] = partido;
+  db.partidos[matchId] = partido;
   guardarDB(db);
 }
 
@@ -468,14 +491,12 @@ async function ejecutarPrediccion(clavePartido) {
 
 function restaurarProgramacionAlIniciar() {
   const db = leerDB();
-  Object.keys(db)
-    .filter((clave) => clave.startsWith('partido'))
-    .forEach((clave) => {
-      const partido = db[clave];
-      if (!partido || partido.prediccionEnviada) return;
-      console.log(`♻️  Restaurando programación de ${clave}: ${partido.homeTeam} vs ${partido.awayTeam}`);
-      programarChequeos(clave, partido);
-    });
+  Object.entries(db.partidos).forEach(([matchId, partido]) => {
+    if (!partido || partido.prediccionEnviada) return;
+    if (new Date(partido.commenceTime).getTime() <= Date.now()) return; // ya pasó, no se puede recuperar
+    console.log(`♻️  Restaurando programación de ${partido.homeTeam} vs ${partido.awayTeam}`);
+    programarChequeos(matchId, partido);
+  });
 }
 
 // ==================================================================
@@ -503,7 +524,11 @@ function programarBusquedaDiaria() {
 // ==================================================================
 
 app.get('/api/estado', (req, res) => {
-  res.json(leerDB());
+  const db = leerDB();
+  const partidos = Object.values(db.partidos).sort(
+    (a, b) => new Date(a.commenceTime) - new Date(b.commenceTime)
+  );
+  res.json({ partidos });
 });
 
 app.post('/api/buscar-partidos', async (req, res) => {
