@@ -75,6 +75,33 @@
     min-height: 18px;
     line-height:1.5;
   }
+  .stats{
+    display:flex;
+    gap:10px;
+    margin-bottom: 22px;
+  }
+  .stats .stat{
+    flex:1;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 10px;
+    text-align:center;
+  }
+  .stats .stat .valor{
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 19px;
+  }
+  .stats .stat .etiqueta{
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .stats .stat.racha-positiva .valor{ color: var(--over); }
+  .stats .stat.racha-negativa .valor{ color: var(--warn); }
   .tarjetas{ margin-top: 26px; display:flex; flex-direction:column; gap:14px; }
   .vacio{
     border: 1px dashed var(--line);
@@ -137,13 +164,19 @@
     <span class="bola">⚽</span>
     <h1>Rastreador Over/Under</h1>
   </div>
-  <p class="sub">Selecciona hasta 3 partidos del día, sigue el movimiento de sus cuotas de goles y recibe la alerta directo en Telegram.</p>
+  <p class="sub">Selecciona hasta 4 partidos del día, sigue el movimiento de sus cuotas de goles y recibe la alerta directo en Telegram.</p>
+
+  <div class="stats" id="stats">
+    <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% aciertos</div></div>
+    <div class="stat"><div class="valor" id="statTotal">—</div><div class="etiqueta">analizados</div></div>
+    <div class="stat" id="statRachaBox"><div class="valor" id="statRacha">—</div><div class="etiqueta">racha</div></div>
+  </div>
 
   <button id="buscar">Buscar Partidos y Programar</button>
   <div id="estadoTexto"></div>
 
   <div class="tarjetas" id="tarjetas">
-    <div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 3).</div>
+    <div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 4, o más en días de recuperación).</div>
   </div>
 </main>
 
@@ -151,16 +184,40 @@
 const boton = document.getElementById('buscar');
 const estadoTexto = document.getElementById('estadoTexto');
 const tarjetas = document.getElementById('tarjetas');
+const statAciertos = document.getElementById('statAciertos');
+const statTotal = document.getElementById('statTotal');
+const statRacha = document.getElementById('statRacha');
+const statRachaBox = document.getElementById('statRachaBox');
 
 const CHECKPOINTS = [
   { clave: '24h', etiqueta: '24h antes' },
-  { clave: '12h', etiqueta: '12h antes' },
-  { clave: '2h', etiqueta: '2h antes' },
+  { clave: '6h', etiqueta: '6h antes' },
   { clave: '1h', etiqueta: '1h antes' },
   { clave: '5m', etiqueta: '5m antes' },
 ];
 
 const LINEAS = ['1.5', '2.5', '3.5'];
+
+async function refrescarEstadisticas(){
+  try{
+    const res = await fetch('/api/estadisticas');
+    const s = await res.json();
+    statAciertos.textContent = s.porcentajeAciertos !== null ? `${s.porcentajeAciertos}%` : '—';
+    statTotal.textContent = s.totalAnalizados ?? '—';
+    statRachaBox.classList.remove('racha-positiva', 'racha-negativa');
+    if (s.racha > 0 && s.tipoRacha === 'acierto'){
+      statRacha.textContent = `+${s.racha}`;
+      statRachaBox.classList.add('racha-positiva');
+    } else if (s.racha > 0 && s.tipoRacha === 'fallo'){
+      statRacha.textContent = `-${s.racha}`;
+      statRachaBox.classList.add('racha-negativa');
+    } else {
+      statRacha.textContent = '—';
+    }
+  }catch(err){
+    console.error('No se pudieron cargar las estadísticas:', err);
+  }
+}
 
 function formatearFecha(iso){
   return new Date(iso).toLocaleString('es-ES', { dateStyle:'medium', timeStyle:'short' });
@@ -206,7 +263,7 @@ async function refrescarEstado(){
     const partidos = data.partidos || [];
 
     if (partidos.length === 0){
-      tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 3).</div>';
+      tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 4, o más en días de recuperación).</div>';
       return;
     }
     tarjetas.innerHTML = partidos.map(p => renderPartido(p)).join('');
@@ -233,7 +290,9 @@ boton.addEventListener('click', async () => {
 });
 
 refrescarEstado();
+refrescarEstadisticas();
 setInterval(refrescarEstado, 30000);
+setInterval(refrescarEstadisticas, 60000);
 </script>
 </body>
 </html>
