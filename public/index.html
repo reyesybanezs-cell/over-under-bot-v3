@@ -134,21 +134,26 @@
     color: var(--muted);
     margin-bottom: 14px;
   }
+  .tabla-scroll{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   table.cuotas{
     width:100%;
+    min-width: 480px;
     border-collapse: collapse;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 10.5px;
+    font-size: 10px;
   }
   table.cuotas th{
     text-align:left;
     color: var(--muted);
     font-weight: 400;
-    padding: 4px 4px 8px 0;
+    padding: 4px 6px 8px 0;
     border-bottom: 1px solid var(--line);
   }
   table.cuotas td{
-    padding: 7px 4px;
+    padding: 7px 6px 7px 0;
     border-bottom: 1px solid var(--line);
     white-space: nowrap;
   }
@@ -228,6 +233,11 @@ function celda(dato){
   return `<span class="over-val">${dato.over}</span>/<span class="under-val">${dato.under}</span>`;
 }
 
+function celdaBtts(dato){
+  if (!dato) return '<span class="pendiente">—</span>';
+  return `<span class="over-val">${dato.si}</span>/<span class="under-val">${dato.no}</span>`;
+}
+
 const MESES_CORTO = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 function formatearDiaCorto(diaLocal){
   const [, mes, dia] = diaLocal.split('-').map(Number);
@@ -239,8 +249,9 @@ function renderPartido(partido){
   const filas = CHECKPOINTS.map(cp => {
     const chequeo = partido.cuotas && partido.cuotas[cp.clave];
     const lineas = chequeo && chequeo.lineas;
+    const btts = chequeo && chequeo.btts;
     const celdas = LINEAS.map(l => `<td>${celda(lineas && lineas[l])}</td>`).join('');
-    return `<tr><td>${cp.etiqueta}</td>${celdas}</tr>`;
+    return `<tr><td>${cp.etiqueta}</td>${celdas}<td>${celdaBtts(btts)}</td></tr>`;
   }).join('');
 
   return `
@@ -248,10 +259,12 @@ function renderPartido(partido){
       <div class="etiqueta">${etiqueta}</div>
       <h2>${partido.homeTeam} vs ${partido.awayTeam}</h2>
       <div class="fecha">${formatearFecha(partido.commenceTime)}</div>
-      <table class="cuotas">
-        <thead><tr><th>Chequeo</th><th>1.5 (O/U)</th><th>2.5 (O/U)</th><th>3.5 (O/U)</th></tr></thead>
-        <tbody>${filas}</tbody>
-      </table>
+      <div class="tabla-scroll">
+        <table class="cuotas">
+          <thead><tr><th>Chequeo</th><th>1.5 (O/U)</th><th>2.5 (O/U)</th><th>3.5 (O/U)</th><th>BTTS (Sí/No)</th></tr></thead>
+          <tbody>${filas}</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
