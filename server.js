@@ -13,65 +13,59 @@ const PORT = process.env.PORT || 3000;
 const ODDS_API_KEY = process.env.THE_ODDS_API_KEY;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || 'cambia-este-secreto';
+const GOOGLE_SHEETS_WEBHOOK_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+const GOOGLE_SHEETS_SECRETO = process.env.GOOGLE_SHEETS_SECRETO || 'cambia-este-secreto';
 
 const DB_PATH = path.join(__dirname, 'database.json');
 
-// Ligas permitidas (claves de The-Odds-API, verificadas contra su tabla
-// oficial en the-odds-api.com/sports-odds-data/sports-apis.html)
+// Ligas permitidas (claves de The-Odds-API)
 const LIGAS_PERMITIDAS = [
-  'soccer_epl',                        // Premier League (Inglaterra)
-  'soccer_efl_champ',                  // Championship (2ª Inglaterra)
-  'soccer_germany_bundesliga',         // Bundesliga (Alemania)
-  'soccer_spain_la_liga',              // La Liga (España)
-  'soccer_italy_serie_a',              // Serie A (Italia)
-  'soccer_france_ligue_one',           // Ligue 1 (Francia)
-  'soccer_netherlands_eredivisie',     // Eredivisie (Países Bajos)
-  'soccer_portugal_primeira_liga',     // Primeira Liga (Portugal)
-  'soccer_brazil_campeonato',          // Brasileirão (Brasil)
-  'soccer_mexico_ligamx',              // Liga MX (México)
-  'soccer_usa_mls',                    // MLS (EE.UU.)
-  'soccer_argentina_primera_division', // Primera División Argentina
-  'soccer_uefa_champs_league',         // UEFA Champions League
+  'soccer_epl',
+  'soccer_efl_champ',
+  'soccer_germany_bundesliga',
+  'soccer_spain_la_liga',
+  'soccer_italy_serie_a',
+  'soccer_france_ligue_one',
+  'soccer_netherlands_eredivisie',
+  'soccer_portugal_primeira_liga',
+  'soccer_brazil_campeonato',
+  'soccer_mexico_ligamx',
+  'soccer_usa_mls',
+  'soccer_argentina_primera_division',
+  'soccer_uefa_champs_league',
 ];
 
-// Puntos de chequeo antes del inicio de cada partido
+// Puntos de chequeo antes del inicio de cada partido (4 puntos, 8 créditos/partido)
 const CHECKPOINTS = [
   { clave: '24h', ms: 24 * 60 * 60 * 1000 },
-  { clave: '12h', ms: 12 * 60 * 60 * 1000 },
-  { clave: '2h', ms: 2 * 60 * 60 * 1000 },
+  { clave: '6h', ms: 6 * 60 * 60 * 1000 },
   { clave: '1h', ms: 1 * 60 * 60 * 1000 },
   { clave: '5m', ms: 5 * 60 * 1000 },
 ];
 
-// Línea sobre la que se toma la decisión final (Over/Under).
-const LINEA_PRINCIPAL = '2.5';
-// Líneas vecinas que solo se usan como señal de confirmación, para
-// reforzar (o no) la confianza en la sugerencia de la línea principal.
-const LINEAS_CONFIRMACION = ['1.5', '3.5'];
-// Todas las líneas que se piden y guardan en cada chequeo.
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5];
-
+const LINEA_PRINCIPAL = '2.5';
 const UMBRAL_MOVIMIENTO = 3; // puntos porcentuales de probabilidad implícita
 
-// Hora local (formato "HH:MM", 24h) a la que se ejecuta la búsqueda
-// automática de los 2 partidos del día. Se puede cambiar en el .env.
-const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '08:00';
+const GAP_MINIMO_MS = 2.5 * 60 * 60 * 1000; // 2h30min entre partidos del mismo día
+const MAX_PARTIDOS_NORMAL = 4;
+const OBJETIVO_MENSUAL = 60; // meta de partidos analizados por mes
 
-// Referencias a los jobs en memoria, para poder cancelarlos si se
-// vuelve a presionar el botón de búsqueda.
+const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '08:00';
+const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
+
 let trabajosActivos = [];
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================================================================
-// BASE DE DATOS (archivo JSON local)
+// BASE DE DATOS (archivo JSON local, solo para partidos EN CURSO)
 // ==================================================================
 
 function leerDB() {
-  if (!fs.existsSync(DB_PATH)) {
-    return { partidos: {} };
-  }
+  if (!fs.existsSync(DB_PATH)) return { partidos: {} };
   try {
     const contenido = fs.readFileSync(DB_PATH, 'utf-8');
     const data = JSON.parse(contenido || '{}');
@@ -88,13 +82,15 @@ function guardarDB(data) {
 }
 
 // ==================================================================
-// TELEGRAM
+// TELEGRAM (enviar Y recibir)
 // ==================================================================
 
+// Devuelve el message_id del mensaje enviado (o null si falló), para
+// poder more tarde detectar respuestas a ESE mensaje específico.
 async function enviarTelegram(mensaje) {
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) {
     console.error('Falta TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID en el archivo .env');
-    return;
+    return null;
   }
   const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
   try {
@@ -103,20 +99,143 @@ async function enviarTelegram(mensaje) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: mensaje }),
     });
-    if (!res.ok) {
-      console.error('Error enviando mensaje a Telegram:', await res.text());
+    const data = await res.json();
+    if (!data.ok) {
+      console.error('Error enviando mensaje a Telegram:', data.description);
+      return null;
     }
+    return data.result.message_id;
   } catch (err) {
     console.error('Error de red enviando a Telegram:', err.message);
+    return null;
   }
+}
+
+// Registra la URL pública de Render como webhook de Telegram, para que
+// nuestro bot pueda RECIBIR tus respuestas (no solo enviar). Solo
+// funciona con una URL pública (Render la provee automáticamente vía
+// RENDER_EXTERNAL_URL); en tu computadora esto no hace nada.
+async function configurarWebhookTelegram() {
+  if (!TELEGRAM_TOKEN) return;
+  const urlPublica = process.env.RENDER_EXTERNAL_URL;
+  if (!urlPublica) {
+    console.log('ℹ️  Sin RENDER_EXTERNAL_URL (estás en local): el webhook de Telegram no se configura.');
+    return;
+  }
+  const urlWebhook = `${urlPublica}/api/telegram-webhook/${TELEGRAM_WEBHOOK_SECRET}`;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: urlWebhook }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      console.log(`✅ Webhook de Telegram configurado en ${urlWebhook}`);
+    } else {
+      console.error('No se pudo configurar el webhook de Telegram:', data.description);
+    }
+  } catch (err) {
+    console.error('Error configurando webhook de Telegram:', err.message);
+  }
+}
+
+// ==================================================================
+// GOOGLE SHEETS (historial persistente)
+// ==================================================================
+
+async function guardarEnHistorial(entrada) {
+  if (!GOOGLE_SHEETS_WEBHOOK_URL) {
+    console.warn('GOOGLE_SHEETS_WEBHOOK_URL no configurado: no se guarda el historial.');
+    return;
+  }
+  try {
+    const res = await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secreto: GOOGLE_SHEETS_SECRETO, ...entrada }),
+    });
+    if (!res.ok) console.error('Error guardando en historial:', res.status);
+  } catch (err) {
+    console.error('Error de red guardando en historial (Google Sheets):', err.message);
+  }
+}
+
+async function obtenerHistorial() {
+  if (!GOOGLE_SHEETS_WEBHOOK_URL) return [];
+  const url = `${GOOGLE_SHEETS_WEBHOOK_URL}?secreto=${encodeURIComponent(GOOGLE_SHEETS_SECRETO)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`El historial respondió ${res.status}`);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'Error desconocido leyendo el historial');
+  return data.historial || [];
+}
+
+function calcularEstadisticas(historial) {
+  const ordenado = [...historial].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const conApuesta = ordenado.filter((h) => h.prediccion === 'OVER' || h.prediccion === 'UNDER');
+  const esAcierto = (h) => h.acierto === true || h.acierto === 'SI';
+  const aciertos = conApuesta.filter(esAcierto).length;
+  const total = conApuesta.length;
+  const porcentajeAciertos = total > 0 ? Number(((aciertos / total) * 100).toFixed(1)) : null;
+
+  let racha = 0;
+  let tipoRacha = null;
+  for (let i = conApuesta.length - 1; i >= 0; i--) {
+    const acerto = esAcierto(conApuesta[i]);
+    if (tipoRacha === null) {
+      tipoRacha = acerto ? 'acierto' : 'fallo';
+      racha = 1;
+    } else if ((tipoRacha === 'acierto') === acerto) {
+      racha++;
+    } else {
+      break;
+    }
+  }
+
+  return { totalAnalizados: ordenado.length, totalConApuesta: total, aciertos, porcentajeAciertos, racha, tipoRacha };
+}
+
+async function obtenerConteoMesActual() {
+  try {
+    const historial = await obtenerHistorial();
+    const ahora = new Date();
+    return historial.filter((h) => {
+      const f = new Date(h.fecha);
+      return f.getUTCMonth() === ahora.getUTCMonth() && f.getUTCFullYear() === ahora.getUTCFullYear();
+    }).length;
+  } catch (err) {
+    console.error('No se pudo obtener el conteo mensual del historial:', err.message);
+    return null;
+  }
+}
+
+// "Modo recuperación": si vas atrasado respecto a la meta mensual de 60
+// partidos, sube el máximo de partidos permitidos ese día para recuperar
+// terreno. Si no se puede determinar el conteo (ej. Sheets caído), usa
+// el máximo normal para no arriesgar nada.
+async function calcularMaxPartidosHoy() {
+  const analizados = await obtenerConteoMesActual();
+  if (analizados === null) return MAX_PARTIDOS_NORMAL;
+
+  const ahora = new Date();
+  const diaDelMes = parseInt(
+    new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA, day: '2-digit' }).format(ahora),
+    10
+  );
+  const diasEnElMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0).getDate();
+  const ritmoEsperado = OBJETIVO_MENSUAL * (diaDelMes / diasEnElMes);
+  const deficit = ritmoEsperado - analizados;
+
+  if (deficit >= 6) return 6;
+  if (deficit >= 3) return 5;
+  return MAX_PARTIDOS_NORMAL;
 }
 
 // ==================================================================
 // THE ODDS API
 // ==================================================================
 
-// Lista de próximos eventos de una liga (endpoint liviano, no consume
-// cupo de cuotas, solo lista partidos programados).
 async function obtenerEventosLiga(sportKey) {
   const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events?apiKey=${ODDS_API_KEY}`;
   try {
@@ -133,15 +252,10 @@ async function obtenerEventosLiga(sportKey) {
   }
 }
 
-// Cuotas Over/Under de un partido específico, para varias líneas de goles
-// (1.5, 2.5, 3.5), promediando entre todas las casas de apuestas.
-// Usamos el mercado "alternate_totals" (no "totals"): el mercado "totals"
-// normal solo trae la línea principal de cada casa (casi siempre 2.5),
-// mientras que "alternate_totals" trae TODAS las líneas que ofrece cada
-// casa (0.5, 1, 1.5, 2, 2.5, 3, 3.5...) en una sola respuesta, con el
-// mismo costo de cuota (1 mercado x 1 región = 1 crédito).
+// Trae, en UNA sola llamada (2 créditos: alternate_totals + btts, 1 región),
+// las 3 líneas de goles (1.5/2.5/3.5) Y el mercado BTTS de un partido.
 async function obtenerCuotasTotales(sportKey, eventId) {
-  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=alternate_totals&oddsFormat=decimal`;
+  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=alternate_totals,btts&oddsFormat=decimal`;
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -150,38 +264,47 @@ async function obtenerCuotasTotales(sportKey, eventId) {
     }
     const data = await res.json();
 
-    // acumulador[punto] = { overs: [...], unders: [...] }
-    const acumulador = {};
-    for (const puntoNum of LINEAS_A_RASTREAR) {
-      acumulador[String(puntoNum)] = { overs: [], unders: [] };
-    }
+    const acumuladorLineas = {};
+    for (const p of LINEAS_A_RASTREAR) acumuladorLineas[String(p)] = { overs: [], unders: [] };
+    const acumuladorBtts = { si: [], no: [] };
 
     for (const casa of data.bookmakers || []) {
       const mercadoTotals = casa.markets.find((m) => m.key === 'alternate_totals');
-      if (!mercadoTotals) continue;
-      for (const outcome of mercadoTotals.outcomes) {
-        const claveLinea = String(outcome.point);
-        if (!acumulador[claveLinea]) continue; // línea que no nos interesa
-        if (outcome.name === 'Over') acumulador[claveLinea].overs.push(outcome.price);
-        if (outcome.name === 'Under') acumulador[claveLinea].unders.push(outcome.price);
+      if (mercadoTotals) {
+        for (const outcome of mercadoTotals.outcomes) {
+          if (!LINEAS_A_RASTREAR.includes(outcome.point)) continue;
+          const clave = String(outcome.point);
+          if (outcome.name === 'Over') acumuladorLineas[clave].overs.push(outcome.price);
+          if (outcome.name === 'Under') acumuladorLineas[clave].unders.push(outcome.price);
+        }
+      }
+      const mercadoBtts = casa.markets.find((m) => m.key === 'btts');
+      if (mercadoBtts) {
+        for (const outcome of mercadoBtts.outcomes) {
+          if (outcome.name === 'Yes') acumuladorBtts.si.push(outcome.price);
+          if (outcome.name === 'No') acumuladorBtts.no.push(outcome.price);
+        }
       }
     }
 
     const promedio = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
-    const resultado = {};
-    for (const [linea, valores] of Object.entries(acumulador)) {
-      if (valores.overs.length === 0 || valores.unders.length === 0) continue;
-      resultado[linea] = {
-        over: Number(promedio(valores.overs).toFixed(2)),
-        under: Number(promedio(valores.unders).toFixed(2)),
-      };
+
+    const lineas = {};
+    for (const p of LINEAS_A_RASTREAR) {
+      const clave = String(p);
+      const { overs, unders } = acumuladorLineas[clave];
+      lineas[clave] =
+        overs.length && unders.length
+          ? { over: Number(promedio(overs).toFixed(2)), under: Number(promedio(unders).toFixed(2)) }
+          : null;
     }
 
-    // Si ni siquiera la línea principal (2.5) tiene datos, lo tratamos
-    // como un fallo de este chequeo.
-    if (!resultado[LINEA_PRINCIPAL]) return null;
+    const btts =
+      acumuladorBtts.si.length && acumuladorBtts.no.length
+        ? { si: Number(promedio(acumuladorBtts.si).toFixed(2)), no: Number(promedio(acumuladorBtts.no).toFixed(2)) }
+        : null;
 
-    return resultado;
+    return { lineas, btts };
   } catch (err) {
     console.error(`Error de red obteniendo cuotas del evento ${eventId}:`, err.message);
     return null;
@@ -203,6 +326,9 @@ function crearRegistroPartido(evento, diaLocal, etiqueta) {
     etiqueta,
     cuotas: {},
     prediccionEnviada: false,
+    prediccion: null, // 'OVER' | 'UNDER' | 'SIN_APUESTA'
+    mensajeMarcadorId: null,
+    estadoFinal: null, // null | 'esperando_marcador'
   };
 }
 
@@ -210,30 +336,15 @@ function formatearFecha(iso) {
   return new Date(iso).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-// Zona horaria usada para decidir qué es "el mismo día". Perú no tiene
-// horario de verano, así que America/Lima es un ancla estable (UTC-5 fijo).
-// Se puede sobreescribir con la variable de entorno ZONA_HORARIA si algún
-// día usas el bot desde otro país.
-const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
-
 function obtenerDiaLocal(fechaIso, zona) {
-  // 'en-CA' da el formato AAAA-MM-DD, cómodo para comparar como texto.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: zona,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(fechaIso));
-}
-
-function mismoDiaLocal(fechaIsoA, fechaIsoB, zona) {
-  return obtenerDiaLocal(fechaIsoA, zona) === obtenerDiaLocal(fechaIsoB, zona);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: zona, year: 'numeric', month: '2-digit', day: '2-digit' }).format(
+    new Date(fechaIso)
+  );
 }
 
 async function buscarYProgramarPartidos() {
   const ahora = Date.now();
   const VEINTICUATRO_HORAS = 24 * 60 * 60 * 1000;
-  const TRES_HORAS = 3 * 60 * 60 * 1000;
 
   let todosLosEventos = [];
   for (const liga of LIGAS_PERMITIDAS) {
@@ -251,67 +362,58 @@ async function buscarYProgramarPartidos() {
     return { ok: false, mensaje: msg };
   }
 
-  // Candidatos válidos para el primer partido de la cadena: deben
-  // iniciar en 24h o más desde ahora.
-  const candidatosA = todosLosEventos.filter(
-    (e) => new Date(e.commence_time).getTime() - ahora >= VEINTICUATRO_HORAS
-  );
-
+  const candidatosA = todosLosEventos.filter((e) => new Date(e.commence_time).getTime() - ahora >= VEINTICUATRO_HORAS);
   if (candidatosA.length === 0) {
     const msg = '⚠️ No se encontró ningún partido que inicie en 24h o más desde ahora.';
     await enviarTelegram(msg);
     return { ok: false, mensaje: msg };
   }
 
-  // Tomamos el primer candidato cronológico como ancla del día. A partir
-  // de ahí, armamos una cadena de hasta 3 partidos EL MISMO DÍA (zona
-  // horaria ZONA_HORARIA), cada uno con 3h+ de diferencia respecto al
-  // anterior (es decir, hasta 6h entre el primero y el tercero). Si ese
-  // día no da para 3, se usan 2; si no da para 2, se usa solo 1.
   const anclaDelDia = candidatosA[0];
   const diaSeleccionado = obtenerDiaLocal(anclaDelDia.commence_time, ZONA_HORARIA);
 
-  // Leemos el estado actual y quitamos los partidos que ya terminaron
-  // (ya mandaron su predicción). Esto es solo "limpieza" del archivo,
-  // nunca toca partidos que sigan en curso.
   const db = leerDB();
+
+  // Limpieza: si un partido terminó y nunca contestaste el marcador
+  // dentro de 48h, se da de baja (no queda esperando para siempre).
   Object.keys(db.partidos).forEach((id) => {
-    if (db.partidos[id].prediccionEnviada) delete db.partidos[id];
+    const p = db.partidos[id];
+    const horasDesdeInicio = (Date.now() - new Date(p.commenceTime).getTime()) / (60 * 60 * 1000);
+    if (p.prediccionEnviada && horasDesdeInicio > 48) delete db.partidos[id];
   });
 
-  // Si ya hay partidos programados (en curso, sin terminar) para ESE
-  // mismo día, no volvemos a seleccionar nada: evita duplicados y, sobre
-  // todo, evita cancelar/perder el rastreo de partidos que ya estaban
-  // en marcha (este era el bug reportado: la búsqueda de las 8am
-  // reemplazaba un partido que todavía faltaba por chequear ese mismo día).
-  const yaHayEseDia = Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado);
+  // Solo bloquea una nueva búsqueda si hay partidos REALMENTE en curso
+  // (todavía no mandaron su predicción) para ese día. Un partido que ya
+  // mandó su predicción y solo está esperando que le contestes el
+  // marcador NO bloquea la búsqueda de días siguientes.
+  const yaHayEseDia = Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado && !p.prediccionEnviada);
   if (yaHayEseDia) {
     const msg = `ℹ️ Ya hay partidos en curso programados para el ${diaSeleccionado}. No se buscan partidos nuevos hasta que esos terminen.`;
     console.log(msg);
     return { ok: false, mensaje: msg };
   }
 
+  const maxPartidosHoy = await calcularMaxPartidosHoy();
+
   const eventosDelDia = todosLosEventos.filter(
     (e) =>
       obtenerDiaLocal(e.commence_time, ZONA_HORARIA) === diaSeleccionado &&
       new Date(e.commence_time).getTime() >= new Date(anclaDelDia.commence_time).getTime()
-  ); // ya viene ordenado cronológicamente, porque todosLosEventos lo está
+  );
 
-  const MAX_PARTIDOS = 3;
   const seleccionados = [anclaDelDia];
   let ultimoTiempo = new Date(anclaDelDia.commence_time).getTime();
-
   for (const evento of eventosDelDia) {
-    if (seleccionados.length >= MAX_PARTIDOS) break;
+    if (seleccionados.length >= maxPartidosHoy) break;
     if (evento.id === anclaDelDia.id) continue;
     const tiempoEvento = new Date(evento.commence_time).getTime();
-    if (tiempoEvento - ultimoTiempo >= TRES_HORAS) {
+    if (tiempoEvento - ultimoTiempo >= GAP_MINIMO_MS) {
       seleccionados.push(evento);
       ultimoTiempo = tiempoEvento;
     }
   }
 
-  const LETRAS = ['A', 'B', 'C'];
+  const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
   seleccionados.forEach((evento, i) => {
     const registro = crearRegistroPartido(evento, diaSeleccionado, LETRAS[i]);
     db.partidos[evento.id] = registro;
@@ -319,7 +421,7 @@ async function buscarYProgramarPartidos() {
   });
   guardarDB(db);
 
-  const emojisLetra = { A: '🅰️', B: '🅱️', C: '🇨' };
+  const emojisLetra = { A: '🅰️', B: '🅱️', C: '🇨', D: '🇩', E: '🇪', F: '🇫' };
   const bloques = seleccionados.map(
     (evento, i) =>
       `${emojisLetra[LETRAS[i]]} ${evento.home_team} vs ${evento.away_team}\n🕒 ${formatearFecha(evento.commence_time)}`
@@ -331,26 +433,19 @@ async function buscarYProgramarPartidos() {
 }
 
 // ==================================================================
-// PROGRAMACIÓN DE CHEQUEOS (node-schedule)
+// PROGRAMACIÓN DE CHEQUEOS
 // ==================================================================
 
 function programarChequeos(matchId, partido) {
   const tiempoInicio = new Date(partido.commenceTime).getTime();
-
   for (const checkpoint of CHECKPOINTS) {
-    // Si ya tenemos datos guardados para este checkpoint (por ejemplo,
-    // tras reiniciar el servidor), no lo reprogramamos.
     if (partido.cuotas && partido.cuotas[checkpoint.clave]) continue;
-
     const momentoEjecucion = new Date(tiempoInicio - checkpoint.ms);
     if (momentoEjecucion.getTime() <= Date.now()) {
       console.log(`⏭️  Checkpoint ${checkpoint.clave} de ${matchId} ya pasó, se omite.`);
       continue;
     }
-
-    const job = schedule.scheduleJob(momentoEjecucion, () => {
-      ejecutarChequeo(matchId, checkpoint.clave);
-    });
+    const job = schedule.scheduleJob(momentoEjecucion, () => ejecutarChequeo(matchId, checkpoint.clave));
     trabajosActivos.push(job);
     console.log(
       `📅 Programado chequeo "${checkpoint.clave}" de ${partido.homeTeam} vs ${partido.awayTeam} para ${momentoEjecucion.toLocaleString('es-ES')}`
@@ -367,18 +462,15 @@ async function ejecutarChequeo(matchId, claveCheckpoint) {
   }
 
   console.log(`🔍 Chequeo "${claveCheckpoint}" para ${partido.homeTeam} vs ${partido.awayTeam}`);
-  const lineas = await obtenerCuotasTotales(partido.sportKey, partido.id);
+  const resultado = await obtenerCuotasTotales(partido.sportKey, partido.id);
 
-  if (!lineas) {
+  if (!resultado) {
     console.log(`No se pudieron obtener cuotas para ${matchId} (${claveCheckpoint}).`);
   } else {
-    partido.cuotas[claveCheckpoint] = { lineas, timestamp: new Date().toISOString() };
+    partido.cuotas[claveCheckpoint] = { ...resultado, timestamp: new Date().toISOString() };
     db.partidos[matchId] = partido;
     guardarDB(db);
-    const principal = lineas[LINEA_PRINCIPAL];
-    console.log(
-      `✔️ Cuotas guardadas (${claveCheckpoint}): Over ${principal.over} / Under ${principal.under} [línea ${LINEA_PRINCIPAL}]`
-    );
+    console.log(`✔️ Cuotas guardadas (${claveCheckpoint}) para ${matchId}`);
   }
 
   if (claveCheckpoint === '5m') {
@@ -387,11 +479,28 @@ async function ejecutarChequeo(matchId, claveCheckpoint) {
 }
 
 // ==================================================================
-// ALGORITMO DE PREDICCIÓN (movimiento de línea)
+// ALGORITMO DE PREDICCIÓN (tendencia sostenida, Over/Under + BTTS)
 // ==================================================================
 
 function calcularProbabilidadImplicita(cuotaDecimal) {
   return (1 / cuotaDecimal) * 100;
+}
+
+// Analiza una serie de 4 valores en el tiempo (24h,6h,1h,5m). "Sostenida"
+// significa que ningún intervalo se movió en contra de la dirección
+// general (se permite que quede plano, no que se revierta).
+function analizarSerie(valores) {
+  const deltaTotal = valores[valores.length - 1] - valores[0];
+  const signoTotal = Math.sign(deltaTotal);
+  let sostenida = signoTotal !== 0;
+  for (let i = 1; i < valores.length; i++) {
+    const d = valores[i] - valores[i - 1];
+    if (Math.sign(d) !== 0 && Math.sign(d) !== signoTotal) {
+      sostenida = false;
+      break;
+    }
+  }
+  return { deltaTotal, sostenida };
 }
 
 async function ejecutarPrediccion(matchId) {
@@ -400,108 +509,117 @@ async function ejecutarPrediccion(matchId) {
   if (!partido) return;
 
   const nombrePartido = `${partido.homeTeam} vs ${partido.awayTeam}`;
-
-  // Usamos el chequeo de 24h como referencia (más margen para detectar
-  // tendencia). Si por algún motivo no se pudo leer (por ejemplo, el
-  // servidor se reinició justo en ese momento), usamos el de 12h.
-  const referencia = partido.cuotas['24h'] || partido.cuotas['12h'];
-  const final = partido.cuotas['5m'];
+  const claves = CHECKPOINTS.map((c) => c.clave); // ['24h','6h','1h','5m']
+  const datosCompletos = claves.every(
+    (c) => partido.cuotas[c] && partido.cuotas[c].lineas && partido.cuotas[c].lineas[LINEA_PRINCIPAL]
+  );
 
   let mensaje;
+  let prediccion = 'SIN_APUESTA';
 
-  const refPrincipal = referencia && referencia.lineas && referencia.lineas[LINEA_PRINCIPAL];
-  const finPrincipal = final && final.lineas && final.lineas[LINEA_PRINCIPAL];
-
-  if (!refPrincipal || !finPrincipal) {
+  if (!datosCompletos) {
     mensaje = `⚠️ SIN APUESTA (Datos insuficientes) en: ${nombrePartido}`;
   } else {
-    const pOverRef = calcularProbabilidadImplicita(refPrincipal.over);
-    const pOverFin = calcularProbabilidadImplicita(finPrincipal.over);
-    const pUnderRef = calcularProbabilidadImplicita(refPrincipal.under);
-    const pUnderFin = calcularProbabilidadImplicita(finPrincipal.under);
+    const serieOver = claves.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[LINEA_PRINCIPAL].over));
+    const serieUnder = claves.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[LINEA_PRINCIPAL].under));
+    const analisisOver = analizarSerie(serieOver);
+    const analisisUnder = analizarSerie(serieUnder);
 
-    const deltaOver = pOverFin - pOverRef;
-    const deltaUnder = pUnderFin - pUnderRef;
+    let direccion = null;
+    if (analisisOver.deltaTotal >= UMBRAL_MOVIMIENTO && analisisOver.sostenida) direccion = 'OVER';
+    else if (analisisUnder.deltaTotal >= UMBRAL_MOVIMIENTO && analisisUnder.sostenida) direccion = 'UNDER';
 
-    let direccion = null; // 'over' | 'under' | null
-    if (deltaOver >= UMBRAL_MOVIMIENTO) direccion = 'over';
-    else if (deltaUnder >= UMBRAL_MOVIMIENTO) direccion = 'under';
-
-    if (!direccion) {
-      mensaje =
-        `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}\n\n` +
-        `Línea ${LINEA_PRINCIPAL} — Δ Over: ${deltaOver.toFixed(1)} pts | Δ Under: ${deltaUnder.toFixed(1)} pts`;
-    } else {
-      // Buscamos confirmación en las líneas vecinas (1.5 / 3.5): si esa
-      // línea también se movió 3pts+ en la MISMA dirección, la sumamos
-      // como confirmación. Esto no genera una alerta aparte, solo
-      // refuerza (o no) la única sugerencia de la línea principal.
-      const confirmadas = [];
-      const sinDatos = [];
-      for (const linea of LINEAS_CONFIRMACION) {
-        const refL = referencia.lineas && referencia.lineas[linea];
-        const finL = final.lineas && final.lineas[linea];
-        if (!refL || !finL) {
-          sinDatos.push(linea);
-          continue;
+    let confirmaBtts = false;
+    let serieDireccion = null;
+    if (direccion) {
+      serieDireccion = direccion === 'OVER' ? serieOver : serieUnder;
+      const bttsDisponible = claves.every((c) => partido.cuotas[c].btts);
+      if (bttsDisponible) {
+        const serieBttsSi = claves.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].btts.si));
+        const analisisBtts = analizarSerie(serieBttsSi);
+        if (direccion === 'OVER') {
+          confirmaBtts = analisisBtts.deltaTotal >= UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
+        } else {
+          confirmaBtts = analisisBtts.deltaTotal <= -UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
         }
-        const dOverL = calcularProbabilidadImplicita(finL.over) - calcularProbabilidadImplicita(refL.over);
-        const dUnderL = calcularProbabilidadImplicita(finL.under) - calcularProbabilidadImplicita(refL.under);
-        const movioComoPrincipal =
-          (direccion === 'over' && dOverL >= UMBRAL_MOVIMIENTO) ||
-          (direccion === 'under' && dUnderL >= UMBRAL_MOVIMIENTO);
-        if (movioComoPrincipal) confirmadas.push(linea);
       }
+    }
 
-      let lineaConfirmacion;
-      if (confirmadas.length > 0) {
-        lineaConfirmacion = `✅ Confirmado también en línea(s): ${confirmadas.join(', ')}`;
-      } else if (sinDatos.length === LINEAS_CONFIRMACION.length) {
-        lineaConfirmacion = 'ℹ️ Sin datos de líneas 1.5/3.5 para confirmar.';
-      } else {
-        lineaConfirmacion = 'ℹ️ Sin confirmación en las líneas 1.5/3.5 (señal aislada en la línea 2.5).';
-      }
-
-      if (direccion === 'over') {
-        mensaje =
-          `🚨 OVER ${LINEA_PRINCIPAL} GOLES - Tendencia Profesional en: ${nombrePartido}\n\n` +
-          `Prob. implícita Over: ${pOverRef.toFixed(1)}% → ${pOverFin.toFixed(1)}% (+${deltaOver.toFixed(1)} pts)\n` +
-          `Cuota Over: ${refPrincipal.over} → ${finPrincipal.over}\n` +
-          `${lineaConfirmacion}`;
-      } else {
-        mensaje =
-          `🚨 UNDER ${LINEA_PRINCIPAL} GOLES - Tendencia Profesional en: ${nombrePartido}\n\n` +
-          `Prob. implícita Under: ${pUnderRef.toFixed(1)}% → ${pUnderFin.toFixed(1)}% (+${deltaUnder.toFixed(1)} pts)\n` +
-          `Cuota Under: ${refPrincipal.under} → ${finPrincipal.under}\n` +
-          `${lineaConfirmacion}`;
-      }
+    if (direccion && confirmaBtts) {
+      prediccion = direccion;
+      const emoji = direccion === 'OVER' ? '🚨 OVER 2.5 GOLES' : '🚨 UNDER 2.5 GOLES';
+      const recorrido = claves.map((c, i) => `${c}: ${serieDireccion[i].toFixed(1)}%`).join(' → ');
+      mensaje =
+        `${emoji} - Tendencia Profesional en: ${nombrePartido}\n\n` +
+        `Movimiento sostenido: ${recorrido}\n` +
+        `Confirmado por BTTS.`;
+    } else {
+      mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}`;
     }
   }
 
   await enviarTelegram(mensaje);
   partido.prediccionEnviada = true;
+  partido.prediccion = prediccion;
   db.partidos[matchId] = partido;
   guardarDB(db);
+
+  programarSolicitudMarcador(matchId, partido);
 }
 
 // ==================================================================
-// RESTAURAR PROGRAMACIÓN AL INICIAR EL SERVIDOR
-// (importante si el servidor se reinicia, por ejemplo en Render free)
+// SOLICITUD DE MARCADOR FINAL (100% manual, vía respuesta en Telegram)
+// ==================================================================
+
+function programarSolicitudMarcador(matchId, partido) {
+  const tiempoSolicitud = new Date(new Date(partido.commenceTime).getTime() + 3 * 60 * 60 * 1000);
+  if (tiempoSolicitud.getTime() <= Date.now()) {
+    enviarSolicitudMarcador(matchId);
+    return;
+  }
+  const job = schedule.scheduleJob(tiempoSolicitud, () => enviarSolicitudMarcador(matchId));
+  trabajosActivos.push(job);
+}
+
+async function enviarSolicitudMarcador(matchId) {
+  const db = leerDB();
+  const partido = db.partidos[matchId];
+  if (!partido || partido.mensajeMarcadorId) return;
+
+  const mensajeId = await enviarTelegram(
+    `⚽ ¿Cuál fue el marcador final de ${partido.homeTeam} vs ${partido.awayTeam}? Respondé a este mensaje con el resultado (ejemplo: 2-1).`
+  );
+  if (mensajeId) {
+    partido.mensajeMarcadorId = mensajeId;
+    partido.estadoFinal = 'esperando_marcador';
+    db.partidos[matchId] = partido;
+    guardarDB(db);
+  }
+}
+
+// ==================================================================
+// RESTAURAR PROGRAMACIÓN AL INICIAR
 // ==================================================================
 
 function restaurarProgramacionAlIniciar() {
   const db = leerDB();
   Object.entries(db.partidos).forEach(([matchId, partido]) => {
-    if (!partido || partido.prediccionEnviada) return;
-    if (new Date(partido.commenceTime).getTime() <= Date.now()) return; // ya pasó, no se puede recuperar
-    console.log(`♻️  Restaurando programación de ${partido.homeTeam} vs ${partido.awayTeam}`);
-    programarChequeos(matchId, partido);
+    if (!partido) return;
+    if (!partido.prediccionEnviada) {
+      if (new Date(partido.commenceTime).getTime() > Date.now()) {
+        console.log(`♻️  Restaurando chequeos de ${partido.homeTeam} vs ${partido.awayTeam}`);
+        programarChequeos(matchId, partido);
+      }
+      return;
+    }
+    if (!partido.mensajeMarcadorId) {
+      programarSolicitudMarcador(matchId, partido);
+    }
   });
 }
 
 // ==================================================================
 // BÚSQUEDA AUTOMÁTICA DIARIA
-// (para no tener que presionar el botón manualmente cada día)
 // ==================================================================
 
 function programarBusquedaDiaria() {
@@ -515,7 +633,6 @@ function programarBusquedaDiaria() {
     console.log(`⏰ Ejecutando búsqueda automática diaria (${HORA_BUSQUEDA_DIARIA} ${ZONA_HORARIA})...`);
     buscarYProgramarPartidos();
   });
-
   console.log(`🗓️  Búsqueda automática programada todos los días a las ${HORA_BUSQUEDA_DIARIA} (${ZONA_HORARIA}).`);
 }
 
@@ -525,10 +642,18 @@ function programarBusquedaDiaria() {
 
 app.get('/api/estado', (req, res) => {
   const db = leerDB();
-  const partidos = Object.values(db.partidos).sort(
-    (a, b) => new Date(a.commenceTime) - new Date(b.commenceTime)
-  );
+  const partidos = Object.values(db.partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
   res.json({ partidos });
+});
+
+app.get('/api/estadisticas', async (req, res) => {
+  try {
+    const historial = await obtenerHistorial();
+    res.json(calcularEstadisticas(historial));
+  } catch (err) {
+    console.error('Error en /api/estadisticas:', err.message);
+    res.json({ totalAnalizados: 0, totalConApuesta: 0, aciertos: 0, porcentajeAciertos: null, racha: 0, tipoRacha: null, error: true });
+  }
 });
 
 app.post('/api/buscar-partidos', async (req, res) => {
@@ -539,6 +664,56 @@ app.post('/api/buscar-partidos', async (req, res) => {
     console.error('Error en /api/buscar-partidos:', err);
     res.status(500).json({ ok: false, mensaje: 'Error interno del servidor.' });
   }
+});
+
+// Webhook de Telegram: acá llegan tus respuestas con el marcador.
+app.post('/api/telegram-webhook/:secret', async (req, res) => {
+  if (req.params.secret !== TELEGRAM_WEBHOOK_SECRET) return res.sendStatus(403);
+
+  const mensaje = req.body && req.body.message;
+  if (!mensaje || !mensaje.text) return res.sendStatus(200);
+  if (String(mensaje.chat.id) !== String(TELEGRAM_CHAT_ID)) return res.sendStatus(200);
+
+  const respondeAId = mensaje.reply_to_message && mensaje.reply_to_message.message_id;
+  if (!respondeAId) return res.sendStatus(200);
+
+  const db = leerDB();
+  const matchId = Object.keys(db.partidos).find((id) => db.partidos[id].mensajeMarcadorId === respondeAId);
+  if (!matchId) return res.sendStatus(200);
+
+  const partido = db.partidos[matchId];
+  const coincidencia = mensaje.text.match(/(\d+)\s*[-:xX]\s*(\d+)/);
+  if (!coincidencia) {
+    await enviarTelegram('No pude entender ese marcador. Respondé con el formato "2-1".');
+    return res.sendStatus(200);
+  }
+
+  const golesLocal = parseInt(coincidencia[1], 10);
+  const golesVisita = parseInt(coincidencia[2], 10);
+  const golesTotales = golesLocal + golesVisita;
+
+  let acierto = null;
+  if (partido.prediccion === 'OVER') acierto = golesTotales > 2.5;
+  else if (partido.prediccion === 'UNDER') acierto = golesTotales < 2.5;
+
+  await guardarEnHistorial({
+    fecha: new Date().toISOString(),
+    liga: partido.sportKey,
+    partido: `${partido.homeTeam} vs ${partido.awayTeam}`,
+    linea: LINEA_PRINCIPAL,
+    prediccion: partido.prediccion || 'SIN_APUESTA',
+    golesTotales,
+    marcador: `${golesLocal}-${golesVisita}`,
+    acierto,
+  });
+
+  const resultadoTexto = acierto === true ? '🎉 ¡Acertaste!' : acierto === false ? '❌ No acertó.' : 'ℹ️ Registrado (no hubo apuesta).';
+  await enviarTelegram(`✅ Marcador registrado: ${golesLocal}-${golesVisita} (${golesTotales} goles). ${resultadoTexto}`);
+
+  delete db.partidos[matchId];
+  guardarDB(db);
+
+  res.sendStatus(200);
 });
 
 app.get('/', (req, res) => {
@@ -553,6 +728,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
   if (!ODDS_API_KEY) console.warn('⚠️  Falta THE_ODDS_API_KEY en el archivo .env');
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) console.warn('⚠️  Falta configuración de Telegram en el archivo .env');
+  if (!GOOGLE_SHEETS_WEBHOOK_URL) console.warn('⚠️  Falta GOOGLE_SHEETS_WEBHOOK_URL: el historial no se va a guardar.');
   restaurarProgramacionAlIniciar();
   programarBusquedaDiaria();
+  configurarWebhookTelegram();
 });
