@@ -442,7 +442,16 @@ function programarChequeos(matchId, partido) {
     if (partido.cuotas && partido.cuotas[checkpoint.clave]) continue;
     const momentoEjecucion = new Date(tiempoInicio - checkpoint.ms);
     if (momentoEjecucion.getTime() <= Date.now()) {
-      console.log(`⏭️  Checkpoint ${checkpoint.clave} de ${matchId} ya pasó, se omite.`);
+      if (tiempoInicio > Date.now()) {
+        // El horario del chequeo ya pasó (probablemente el servidor estuvo
+        // dormido/reiniciándose), pero el partido todavía no arrancó, así
+        // que el dato sigue siendo útil: lo recuperamos ahora mismo en vez
+        // de perderlo para siempre.
+        console.log(`⏰ Checkpoint "${checkpoint.clave}" de ${partido.homeTeam} vs ${partido.awayTeam} atrasado, recuperando ahora.`);
+        ejecutarChequeo(matchId, checkpoint.clave);
+      } else {
+        console.log(`⏭️  Checkpoint ${checkpoint.clave} de ${matchId} ya pasó y el partido ya empezó, se omite.`);
+      }
       continue;
     }
     const job = schedule.scheduleJob(momentoEjecucion, () => ejecutarChequeo(matchId, checkpoint.clave));
@@ -451,6 +460,27 @@ function programarChequeos(matchId, partido) {
       `📅 Programado chequeo "${checkpoint.clave}" de ${partido.homeTeam} vs ${partido.awayTeam} para ${momentoEjecucion.toLocaleString('es-ES')}`
     );
   }
+}
+
+function esperar(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Reintenta hasta 3 veces (con 30s de espera entre intento y intento)
+// antes de darse por vencido. Cubre errores puntuales: un hiccup de red,
+// un timeout momentáneo de The-Odds-API, etc. — sin esto, un solo fallo
+// pasajero hacía perder el chequeo completo, aunque el servidor estuviera
+// funcionando bien.
+async function obtenerCuotasConReintentos(sportKey, eventId, intentosRestantes = 3) {
+  for (let intento = 1; intento <= intentosRestantes; intento++) {
+    const resultado = await obtenerCuotasTotales(sportKey, eventId);
+    if (resultado) return resultado;
+    if (intento < intentosRestantes) {
+      console.log(`↻ Cuotas no disponibles, reintentando (${intento + 1}/${intentosRestantes}) en 30s...`);
+      await esperar(30000);
+    }
+  }
+  return null;
 }
 
 async function ejecutarChequeo(matchId, claveCheckpoint) {
@@ -462,10 +492,10 @@ async function ejecutarChequeo(matchId, claveCheckpoint) {
   }
 
   console.log(`🔍 Chequeo "${claveCheckpoint}" para ${partido.homeTeam} vs ${partido.awayTeam}`);
-  const resultado = await obtenerCuotasTotales(partido.sportKey, partido.id);
+  const resultado = await obtenerCuotasConReintentos(partido.sportKey, partido.id);
 
   if (!resultado) {
-    console.log(`No se pudieron obtener cuotas para ${matchId} (${claveCheckpoint}).`);
+    console.log(`No se pudieron obtener cuotas para ${matchId} (${claveCheckpoint}) después de reintentar.`);
   } else {
     partido.cuotas[claveCheckpoint] = { ...resultado, timestamp: new Date().toISOString() };
     db.partidos[matchId] = partido;
@@ -510,18 +540,30 @@ async function ejecutarPrediccion(matchId) {
 
   const nombrePartido = `${partido.homeTeam} vs ${partido.awayTeam}`;
   const claves = CHECKPOINTS.map((c) => c.clave); // ['24h','6h','1h','5m']
-  const datosCompletos = claves.every(
+  const clavesDisponibles = claves.filter(
     (c) => partido.cuotas[c] && partido.cuotas[c].lineas && partido.cuotas[c].lineas[LINEA_PRINCIPAL]
   );
+  const faltantes = claves.filter((c) => !clavesDisponibles.includes(c));
+  // Mínimo indispensable: apertura (24h) y cierre (5m), son los extremos
+  // que definen el movimiento. Un punto intermedio faltante (6h o 1h) no
+  // debería tirar todo el análisis a la basura — se analiza con los
+  // puntos que sí tenemos.
+  const datosMinimos =
+    clavesDisponibles.includes('24h') && clavesDisponibles.includes('5m') && clavesDisponibles.length >= 2;
 
   let mensaje;
   let prediccion = 'SIN_APUESTA';
 
-  if (!datosCompletos) {
+  if (!datosMinimos) {
     mensaje = `⚠️ SIN APUESTA (Datos insuficientes) en: ${nombrePartido}`;
   } else {
-    const serieOver = claves.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[LINEA_PRINCIPAL].over));
-    const serieUnder = claves.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[LINEA_PRINCIPAL].under));
+    const notaFaltantes =
+      faltantes.length > 0
+        ? `\n(⚠️ faltó el chequeo de ${faltantes.join(', ')}; análisis con ${clavesDisponibles.length} de ${claves.length} puntos)`
+        : '';
+
+    const serieOver = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[LINEA_PRINCIPAL].over));
+    const serieUnder = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[LINEA_PRINCIPAL].under));
     const analisisOver = analizarSerie(serieOver);
     const analisisUnder = analizarSerie(serieUnder);
 
@@ -533,9 +575,9 @@ async function ejecutarPrediccion(matchId) {
     let serieDireccion = null;
     if (direccion) {
       serieDireccion = direccion === 'OVER' ? serieOver : serieUnder;
-      const bttsDisponible = claves.every((c) => partido.cuotas[c].btts);
+      const bttsDisponible = clavesDisponibles.every((c) => partido.cuotas[c].btts);
       if (bttsDisponible) {
-        const serieBttsSi = claves.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].btts.si));
+        const serieBttsSi = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].btts.si));
         const analisisBtts = analizarSerie(serieBttsSi);
         if (direccion === 'OVER') {
           confirmaBtts = analisisBtts.deltaTotal >= UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
@@ -548,13 +590,14 @@ async function ejecutarPrediccion(matchId) {
     if (direccion && confirmaBtts) {
       prediccion = direccion;
       const emoji = direccion === 'OVER' ? '🚨 OVER 2.5 GOLES' : '🚨 UNDER 2.5 GOLES';
-      const recorrido = claves.map((c, i) => `${c}: ${serieDireccion[i].toFixed(1)}%`).join(' → ');
+      const recorrido = clavesDisponibles.map((c, i) => `${c}: ${serieDireccion[i].toFixed(1)}%`).join(' → ');
       mensaje =
         `${emoji} - Tendencia Profesional en: ${nombrePartido}\n\n` +
         `Movimiento sostenido: ${recorrido}\n` +
-        `Confirmado por BTTS.`;
+        `Confirmado por BTTS.` +
+        notaFaltantes;
     } else {
-      mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}`;
+      mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}` + notaFaltantes;
     }
   }
 
