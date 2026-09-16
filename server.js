@@ -79,6 +79,59 @@ function leerDB() {
 
 function guardarDB(data) {
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2), 'utf-8');
+  // Además de guardar local, mandamos una copia a Google Sheets sin
+  // esperar la respuesta (no debe frenar ni romper el resto del flujo
+  // si falla). Esto es lo que permite recuperar los partidos "en curso"
+  // si Render se reinicia y borra el disco local (pasa en cada
+  // actualización de código, por ejemplo).
+  sincronizarEstadoEnCurso(data).catch((err) => {
+    console.error('No se pudo sincronizar el estado en curso con Sheets:', err.message);
+  });
+}
+
+async function sincronizarEstadoEnCurso(data) {
+  if (!GOOGLE_SHEETS_WEBHOOK_URL) return;
+  await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ secreto: GOOGLE_SHEETS_SECRETO, tipo: 'estado', datos: JSON.stringify(data) }),
+  });
+}
+
+async function recuperarEstadoEnCursoDeSheets() {
+  if (!GOOGLE_SHEETS_WEBHOOK_URL) return null;
+  try {
+    const url = `${GOOGLE_SHEETS_WEBHOOK_URL}?secreto=${encodeURIComponent(GOOGLE_SHEETS_SECRETO)}&tipo=estado`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.ok || !data.estado) return null;
+    const parseado = JSON.parse(data.estado);
+    if (!parseado.partidos) parseado.partidos = {};
+    return parseado;
+  } catch (err) {
+    console.error('No se pudo recuperar el estado en curso desde Sheets:', err.message);
+    return null;
+  }
+}
+
+// Al arrancar: si el disco local no tiene nada (por ejemplo, justo
+// después de un redeploy en Render, que borra el disco), se intenta
+// recuperar la última copia guardada en Sheets antes de restaurar la
+// programación de chequeos. Así una actualización de código no hace
+// perder los partidos que ya estaban en curso.
+async function recuperarEstadoSiHaceFalta() {
+  const dbLocal = leerDB();
+  if (Object.keys(dbLocal.partidos).length > 0) return; // ya hay algo local, no hace falta recuperar nada
+
+  console.log('🔄 No hay partidos en curso en el disco local (probablemente un redeploy). Buscando una copia en Sheets...');
+  const dbRemota = await recuperarEstadoEnCursoDeSheets();
+  if (dbRemota && Object.keys(dbRemota.partidos).length > 0) {
+    fs.writeFileSync(DB_PATH, JSON.stringify(dbRemota, null, 2), 'utf-8'); // guardado local directo, sin volver a sincronizar
+    console.log(`✅ Recuperados ${Object.keys(dbRemota.partidos).length} partido(s) en curso desde Sheets.`);
+  } else {
+    console.log('ℹ️ No había ninguna copia útil en Sheets (o Sheets no está configurado). Se arranca sin partidos en curso.');
+  }
 }
 
 // ==================================================================
@@ -147,7 +200,7 @@ async function configurarWebhookTelegram() {
 async function guardarEnHistorial(entrada) {
   if (!GOOGLE_SHEETS_WEBHOOK_URL) {
     console.warn('GOOGLE_SHEETS_WEBHOOK_URL no configurado: no se guarda el historial.');
-    return;
+    return false;
   }
   try {
     const res = await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
@@ -155,9 +208,19 @@ async function guardarEnHistorial(entrada) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secreto: GOOGLE_SHEETS_SECRETO, ...entrada }),
     });
-    if (!res.ok) console.error('Error guardando en historial:', res.status);
+    if (!res.ok) {
+      console.error('Error guardando en historial:', res.status);
+      return false;
+    }
+    const data = await res.json();
+    if (!data.ok) {
+      console.error('El historial (Apps Script) respondió con error:', data.error);
+      return false;
+    }
+    return true;
   } catch (err) {
     console.error('Error de red guardando en historial (Google Sheets):', err.message);
+    return false;
   }
 }
 
@@ -596,6 +659,17 @@ async function ejecutarPrediccion(matchId) {
         `Movimiento sostenido: ${recorrido}\n` +
         `Confirmado por BTTS.` +
         notaFaltantes;
+
+      // Datos que no afectan la decisión, pero valen para analizar el
+      // historial más adelante (rentabilidad real, si el umbral de 3%
+      // es el correcto, si las predicciones con datos incompletos
+      // rinden distinto a las completas).
+      const cuotaCampo = direccion === 'OVER' ? 'over' : 'under';
+      partido.cuotaApertura = partido.cuotas['24h'].lineas[LINEA_PRINCIPAL][cuotaCampo];
+      partido.cuotaCierre = partido.cuotas['5m'].lineas[LINEA_PRINCIPAL][cuotaCampo];
+      partido.movimientoPts = Number((direccion === 'OVER' ? analisisOver.deltaTotal : analisisUnder.deltaTotal).toFixed(1));
+      partido.margen = Number((partido.movimientoPts - (direccion === 'OVER' ? analisisUnder.deltaTotal : analisisOver.deltaTotal)).toFixed(1));
+      partido.puntosUsados = `${clavesDisponibles.length}/${claves.length}`;
     } else {
       mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}` + notaFaltantes;
     }
@@ -699,6 +773,45 @@ app.get('/api/estadisticas', async (req, res) => {
   }
 });
 
+// Ruta de prueba manual: visitá esta URL en el navegador para confirmar
+// que la conexión con Google Sheets (guardar Y leer) funciona bien, sin
+// tener que esperar a que termine un partido real. Protegida con el
+// mismo secreto que usa el webhook de Telegram, para que no cualquiera
+// la use. Es segura de dejar en el proyecto de forma permanente.
+app.get('/api/test-historial/:secret', async (req, res) => {
+  if (req.params.secret !== TELEGRAM_WEBHOOK_SECRET) return res.status(404).send('No encontrado');
+
+  const guardado = await guardarEnHistorial({
+    fecha: new Date().toISOString(),
+    liga: 'prueba_conexion',
+    partido: 'Equipo Prueba A vs Equipo Prueba B',
+    linea: LINEA_PRINCIPAL,
+    prediccion: 'OVER',
+    golesTotales: 3,
+    marcador: '2-1',
+    acierto: true,
+    cuotaApertura: 1.95,
+    cuotaCierre: 1.70,
+    movimientoPts: 5.2,
+    margen: 4.1,
+    puntosUsados: '4/4',
+  });
+
+  if (!guardado) {
+    return res.json({
+      ok: false,
+      mensaje: 'No se pudo guardar. Revisá los logs de Render para ver el error exacto (secreto incorrecto, despliegue sin acceso público, etc).',
+    });
+  }
+
+  const historial = await obtenerHistorial();
+  res.json({
+    ok: true,
+    mensaje: 'Se guardó una fila de prueba y se pudo volver a leer el historial. Revisá tu hoja de Sheets: deberías ver una fila con "prueba_conexion". Podés borrar esa fila cuando quieras, no afecta nada.',
+    totalFilasEnHistorial: historial.length,
+  });
+});
+
 app.post('/api/buscar-partidos', async (req, res) => {
   try {
     const resultado = await buscarYProgramarPartidos();
@@ -748,6 +861,11 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     golesTotales,
     marcador: `${golesLocal}-${golesVisita}`,
     acierto,
+    cuotaApertura: partido.cuotaApertura ?? '',
+    cuotaCierre: partido.cuotaCierre ?? '',
+    movimientoPts: partido.movimientoPts ?? '',
+    margen: partido.margen ?? '',
+    puntosUsados: partido.puntosUsados ?? '',
   });
 
   const resultadoTexto = acierto === true ? '🎉 ¡Acertaste!' : acierto === false ? '❌ No acertó.' : 'ℹ️ Registrado (no hubo apuesta).';
@@ -767,11 +885,12 @@ app.get('/', (req, res) => {
 // INICIO DEL SERVIDOR
 // ==================================================================
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
   if (!ODDS_API_KEY) console.warn('⚠️  Falta THE_ODDS_API_KEY en el archivo .env');
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) console.warn('⚠️  Falta configuración de Telegram en el archivo .env');
   if (!GOOGLE_SHEETS_WEBHOOK_URL) console.warn('⚠️  Falta GOOGLE_SHEETS_WEBHOOK_URL: el historial no se va a guardar.');
+  await recuperarEstadoSiHaceFalta();
   restaurarProgramacionAlIniciar();
   programarBusquedaDiaria();
   configurarWebhookTelegram();
