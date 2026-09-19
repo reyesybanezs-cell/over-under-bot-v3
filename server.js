@@ -89,6 +89,23 @@ function guardarDB(data) {
   });
 }
 
+// Cola de operaciones sobre la base de datos. Si varios partidos tienen
+// un chequeo programado casi a la misma hora (por ejemplo, el "24h
+// antes" de 6 partidos distintos), cada uno lee, modifica y vuelve a
+// guardar el archivo completo — sin esta cola, el que termina último
+// pisa por completo lo que los demás acababan de guardar, y solo
+// sobrevive uno. Con esto, cada lectura+escritura se hace de a una a la
+// vez, nunca superpuestas.
+let colaOperacionesDB = Promise.resolve();
+function conBloqueoDB(tarea) {
+  const resultado = colaOperacionesDB.then(tarea, tarea);
+  colaOperacionesDB = resultado.then(
+    () => {},
+    () => {}
+  );
+  return resultado;
+}
+
 async function sincronizarEstadoEnCurso(data) {
   if (!GOOGLE_SHEETS_WEBHOOK_URL) return;
   await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
@@ -435,55 +452,64 @@ async function buscarYProgramarPartidos() {
   const anclaDelDia = candidatosA[0];
   const diaSeleccionado = obtenerDiaLocal(anclaDelDia.commence_time, ZONA_HORARIA);
 
-  const db = leerDB();
+  const resultadoBusqueda = await conBloqueoDB(async () => {
+    const db = leerDB();
 
-  // Limpieza: si un partido terminó y nunca contestaste el marcador
-  // dentro de 48h, se da de baja (no queda esperando para siempre).
-  Object.keys(db.partidos).forEach((id) => {
-    const p = db.partidos[id];
-    const horasDesdeInicio = (Date.now() - new Date(p.commenceTime).getTime()) / (60 * 60 * 1000);
-    if (p.prediccionEnviada && horasDesdeInicio > 48) delete db.partidos[id];
-  });
+    // Limpieza: si un partido terminó y nunca contestaste el marcador
+    // dentro de 48h, se da de baja (no queda esperando para siempre).
+    Object.keys(db.partidos).forEach((id) => {
+      const p = db.partidos[id];
+      const horasDesdeInicio = (Date.now() - new Date(p.commenceTime).getTime()) / (60 * 60 * 1000);
+      if (p.prediccionEnviada && horasDesdeInicio > 48) delete db.partidos[id];
+    });
 
-  // Solo bloquea una nueva búsqueda si hay partidos REALMENTE en curso
-  // (todavía no mandaron su predicción) para ese día. Un partido que ya
-  // mandó su predicción y solo está esperando que le contestes el
-  // marcador NO bloquea la búsqueda de días siguientes.
-  const yaHayEseDia = Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado && !p.prediccionEnviada);
-  if (yaHayEseDia) {
-    const msg = `ℹ️ Ya hay partidos en curso programados para el ${diaSeleccionado}. No se buscan partidos nuevos hasta que esos terminen.`;
-    console.log(msg);
-    return { ok: false, mensaje: msg };
-  }
-
-  const maxPartidosHoy = await calcularMaxPartidosHoy();
-
-  const eventosDelDia = todosLosEventos.filter(
-    (e) =>
-      obtenerDiaLocal(e.commence_time, ZONA_HORARIA) === diaSeleccionado &&
-      new Date(e.commence_time).getTime() >= new Date(anclaDelDia.commence_time).getTime()
-  );
-
-  const seleccionados = [anclaDelDia];
-  let ultimoTiempo = new Date(anclaDelDia.commence_time).getTime();
-  for (const evento of eventosDelDia) {
-    if (seleccionados.length >= maxPartidosHoy) break;
-    if (evento.id === anclaDelDia.id) continue;
-    const tiempoEvento = new Date(evento.commence_time).getTime();
-    if (tiempoEvento - ultimoTiempo >= GAP_MINIMO_MS) {
-      seleccionados.push(evento);
-      ultimoTiempo = tiempoEvento;
+    // Solo bloquea una nueva búsqueda si hay partidos REALMENTE en curso
+    // (todavía no mandaron su predicción) para ese día. Un partido que ya
+    // mandó su predicción y solo está esperando que le contestes el
+    // marcador NO bloquea la búsqueda de días siguientes.
+    const yaHayEseDia = Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado && !p.prediccionEnviada);
+    if (yaHayEseDia) {
+      const msg = `ℹ️ Ya hay partidos en curso programados para el ${diaSeleccionado}. No se buscan partidos nuevos hasta que esos terminen.`;
+      console.log(msg);
+      return { bloqueado: true, mensaje: msg };
     }
+
+    const maxPartidosHoy = await calcularMaxPartidosHoy();
+
+    const eventosDelDia = todosLosEventos.filter(
+      (e) =>
+        obtenerDiaLocal(e.commence_time, ZONA_HORARIA) === diaSeleccionado &&
+        new Date(e.commence_time).getTime() >= new Date(anclaDelDia.commence_time).getTime()
+    );
+
+    const seleccionados = [anclaDelDia];
+    let ultimoTiempo = new Date(anclaDelDia.commence_time).getTime();
+    for (const evento of eventosDelDia) {
+      if (seleccionados.length >= maxPartidosHoy) break;
+      if (evento.id === anclaDelDia.id) continue;
+      const tiempoEvento = new Date(evento.commence_time).getTime();
+      if (tiempoEvento - ultimoTiempo >= GAP_MINIMO_MS) {
+        seleccionados.push(evento);
+        ultimoTiempo = tiempoEvento;
+      }
+    }
+
+    const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
+    seleccionados.forEach((evento, i) => {
+      const registro = crearRegistroPartido(evento, diaSeleccionado, LETRAS[i]);
+      db.partidos[evento.id] = registro;
+      programarChequeos(evento.id, registro);
+    });
+    guardarDB(db);
+
+    return { bloqueado: false, seleccionados, LETRAS };
+  });
+
+  if (resultadoBusqueda.bloqueado) {
+    return { ok: false, mensaje: resultadoBusqueda.mensaje };
   }
 
-  const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
-  seleccionados.forEach((evento, i) => {
-    const registro = crearRegistroPartido(evento, diaSeleccionado, LETRAS[i]);
-    db.partidos[evento.id] = registro;
-    programarChequeos(evento.id, registro);
-  });
-  guardarDB(db);
-
+  const { seleccionados, LETRAS } = resultadoBusqueda;
   const emojisLetra = { A: '🅰️', B: '🅱️', C: '🇨', D: '🇩', E: '🇪', F: '🇫' };
   const bloques = seleccionados.map(
     (evento, i) =>
@@ -492,7 +518,7 @@ async function buscarYProgramarPartidos() {
   const mensaje = `✅ ${seleccionados.length} partido(s) programado(s) para el ${diaSeleccionado}:\n\n${bloques.join('\n\n')}`;
   await enviarTelegram(mensaje);
 
-  return { ok: true, mensaje: `${seleccionados.length} partido(s) programado(s) correctamente.`, db };
+  return { ok: true, mensaje: `${seleccionados.length} partido(s) programado(s) correctamente.` };
 }
 
 // ==================================================================
@@ -547,22 +573,30 @@ async function obtenerCuotasConReintentos(sportKey, eventId, intentosRestantes =
 }
 
 async function ejecutarChequeo(matchId, claveCheckpoint) {
-  const db = leerDB();
-  const partido = db.partidos[matchId];
-  if (!partido) {
+  const dbInicial = leerDB();
+  const partidoInicial = dbInicial.partidos[matchId];
+  if (!partidoInicial) {
     console.log(`El partido ${matchId} ya no existe en la base de datos, se omite el chequeo.`);
     return;
   }
 
-  console.log(`🔍 Chequeo "${claveCheckpoint}" para ${partido.homeTeam} vs ${partido.awayTeam}`);
-  const resultado = await obtenerCuotasConReintentos(partido.sportKey, partido.id);
+  console.log(`🔍 Chequeo "${claveCheckpoint}" para ${partidoInicial.homeTeam} vs ${partidoInicial.awayTeam}`);
+  const resultado = await obtenerCuotasConReintentos(partidoInicial.sportKey, partidoInicial.id);
 
   if (!resultado) {
     console.log(`No se pudieron obtener cuotas para ${matchId} (${claveCheckpoint}) después de reintentar.`);
   } else {
-    partido.cuotas[claveCheckpoint] = { ...resultado, timestamp: new Date().toISOString() };
-    db.partidos[matchId] = partido;
-    guardarDB(db);
+    // Recién ahora, con el dato ya en mano, tomamos turno en la cola:
+    // leemos el estado más fresco posible y aplicamos el cambio, sin
+    // pisar lo que otro partido haya guardado mientras esperábamos la API.
+    await conBloqueoDB(() => {
+      const db = leerDB();
+      const partido = db.partidos[matchId];
+      if (!partido) return; // pudo haberse dado de baja mientras se esperaba la API
+      partido.cuotas[claveCheckpoint] = { ...resultado, timestamp: new Date().toISOString() };
+      db.partidos[matchId] = partido;
+      guardarDB(db);
+    });
     console.log(`✔️ Cuotas guardadas (${claveCheckpoint}) para ${matchId}`);
   }
 
@@ -597,6 +631,7 @@ function analizarSerie(valores) {
 }
 
 async function ejecutarPrediccion(matchId) {
+  return conBloqueoDB(async () => {
   const db = leerDB();
   const partido = db.partidos[matchId];
   if (!partido) return;
@@ -630,23 +665,36 @@ async function ejecutarPrediccion(matchId) {
     const analisisOver = analizarSerie(serieOver);
     const analisisUnder = analizarSerie(serieUnder);
 
+    // Diagnóstico: se guarda SIEMPRE que haya datos mínimos, dispare o no
+    // una predicción. Es lo que permite, con el tiempo, revisar si el
+    // umbral de 3% es razonable o casi nunca se alcanza.
+    partido.movimientoOver = Number(analisisOver.deltaTotal.toFixed(1));
+    partido.sostenidaOver = analisisOver.sostenida;
+    partido.movimientoUnder = Number(analisisUnder.deltaTotal.toFixed(1));
+    partido.sostenidaUnder = analisisUnder.sostenida;
+    partido.puntosUsados = `${clavesDisponibles.length}/${claves.length}`;
+
+    const bttsDisponible = clavesDisponibles.every((c) => partido.cuotas[c].btts);
+    let analisisBtts = null;
+    if (bttsDisponible) {
+      const serieBttsSi = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].btts.si));
+      analisisBtts = analizarSerie(serieBttsSi);
+      partido.movimientoBtts = Number(analisisBtts.deltaTotal.toFixed(1));
+      partido.sostenidaBtts = analisisBtts.sostenida;
+    }
+
     let direccion = null;
     if (analisisOver.deltaTotal >= UMBRAL_MOVIMIENTO && analisisOver.sostenida) direccion = 'OVER';
     else if (analisisUnder.deltaTotal >= UMBRAL_MOVIMIENTO && analisisUnder.sostenida) direccion = 'UNDER';
 
     let confirmaBtts = false;
     let serieDireccion = null;
-    if (direccion) {
+    if (direccion && analisisBtts) {
       serieDireccion = direccion === 'OVER' ? serieOver : serieUnder;
-      const bttsDisponible = clavesDisponibles.every((c) => partido.cuotas[c].btts);
-      if (bttsDisponible) {
-        const serieBttsSi = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].btts.si));
-        const analisisBtts = analizarSerie(serieBttsSi);
-        if (direccion === 'OVER') {
-          confirmaBtts = analisisBtts.deltaTotal >= UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
-        } else {
-          confirmaBtts = analisisBtts.deltaTotal <= -UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
-        }
+      if (direccion === 'OVER') {
+        confirmaBtts = analisisBtts.deltaTotal >= UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
+      } else {
+        confirmaBtts = analisisBtts.deltaTotal <= -UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
       }
     }
 
@@ -660,16 +708,11 @@ async function ejecutarPrediccion(matchId) {
         `Confirmado por BTTS.` +
         notaFaltantes;
 
-      // Datos que no afectan la decisión, pero valen para analizar el
-      // historial más adelante (rentabilidad real, si el umbral de 3%
-      // es el correcto, si las predicciones con datos incompletos
-      // rinden distinto a las completas).
+      // Cuotas reales de la dirección elegida (para poder calcular
+      // rentabilidad real más adelante, no solo % de aciertos).
       const cuotaCampo = direccion === 'OVER' ? 'over' : 'under';
       partido.cuotaApertura = partido.cuotas['24h'].lineas[LINEA_PRINCIPAL][cuotaCampo];
       partido.cuotaCierre = partido.cuotas['5m'].lineas[LINEA_PRINCIPAL][cuotaCampo];
-      partido.movimientoPts = Number((direccion === 'OVER' ? analisisOver.deltaTotal : analisisUnder.deltaTotal).toFixed(1));
-      partido.margen = Number((partido.movimientoPts - (direccion === 'OVER' ? analisisUnder.deltaTotal : analisisOver.deltaTotal)).toFixed(1));
-      partido.puntosUsados = `${clavesDisponibles.length}/${claves.length}`;
     } else {
       mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}` + notaFaltantes;
     }
@@ -682,6 +725,7 @@ async function ejecutarPrediccion(matchId) {
   guardarDB(db);
 
   programarSolicitudMarcador(matchId, partido);
+  });
 }
 
 // ==================================================================
@@ -699,19 +743,21 @@ function programarSolicitudMarcador(matchId, partido) {
 }
 
 async function enviarSolicitudMarcador(matchId) {
-  const db = leerDB();
-  const partido = db.partidos[matchId];
-  if (!partido || partido.mensajeMarcadorId) return;
+  return conBloqueoDB(async () => {
+    const db = leerDB();
+    const partido = db.partidos[matchId];
+    if (!partido || partido.mensajeMarcadorId) return;
 
-  const mensajeId = await enviarTelegram(
-    `⚽ ¿Cuál fue el marcador final de ${partido.homeTeam} vs ${partido.awayTeam}? Respondé a este mensaje con el resultado (ejemplo: 2-1).`
-  );
-  if (mensajeId) {
-    partido.mensajeMarcadorId = mensajeId;
-    partido.estadoFinal = 'esperando_marcador';
-    db.partidos[matchId] = partido;
-    guardarDB(db);
-  }
+    const mensajeId = await enviarTelegram(
+      `⚽ ¿Cuál fue el marcador final de ${partido.homeTeam} vs ${partido.awayTeam}? Respondé a este mensaje con el resultado (ejemplo: 2-1).`
+    );
+    if (mensajeId) {
+      partido.mensajeMarcadorId = mensajeId;
+      partido.estadoFinal = 'esperando_marcador';
+      db.partidos[matchId] = partido;
+      guardarDB(db);
+    }
+  });
 }
 
 // ==================================================================
@@ -792,9 +838,13 @@ app.get('/api/test-historial/:secret', async (req, res) => {
     acierto: true,
     cuotaApertura: 1.95,
     cuotaCierre: 1.70,
-    movimientoPts: 5.2,
-    margen: 4.1,
     puntosUsados: '4/4',
+    movimientoOver: 5.2,
+    sostenidaOver: true,
+    movimientoUnder: -3.8,
+    sostenidaUnder: true,
+    movimientoBtts: 4.5,
+    sostenidaBtts: true,
   });
 
   if (!guardado) {
@@ -833,11 +883,11 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
   const respondeAId = mensaje.reply_to_message && mensaje.reply_to_message.message_id;
   if (!respondeAId) return res.sendStatus(200);
 
-  const db = leerDB();
-  const matchId = Object.keys(db.partidos).find((id) => db.partidos[id].mensajeMarcadorId === respondeAId);
+  const dbInicial = leerDB();
+  const matchId = Object.keys(dbInicial.partidos).find((id) => dbInicial.partidos[id].mensajeMarcadorId === respondeAId);
   if (!matchId) return res.sendStatus(200);
 
-  const partido = db.partidos[matchId];
+  const partido = dbInicial.partidos[matchId];
   const coincidencia = mensaje.text.match(/(\d+)\s*[-:xX]\s*(\d+)/);
   if (!coincidencia) {
     await enviarTelegram('No pude entender ese marcador. Respondé con el formato "2-1".');
@@ -863,16 +913,26 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     acierto,
     cuotaApertura: partido.cuotaApertura ?? '',
     cuotaCierre: partido.cuotaCierre ?? '',
-    movimientoPts: partido.movimientoPts ?? '',
-    margen: partido.margen ?? '',
     puntosUsados: partido.puntosUsados ?? '',
+    movimientoOver: partido.movimientoOver ?? '',
+    sostenidaOver: partido.sostenidaOver ?? '',
+    movimientoUnder: partido.movimientoUnder ?? '',
+    sostenidaUnder: partido.sostenidaUnder ?? '',
+    movimientoBtts: partido.movimientoBtts ?? '',
+    sostenidaBtts: partido.sostenidaBtts ?? '',
   });
 
   const resultadoTexto = acierto === true ? '🎉 ¡Acertaste!' : acierto === false ? '❌ No acertó.' : 'ℹ️ Registrado (no hubo apuesta).';
   await enviarTelegram(`✅ Marcador registrado: ${golesLocal}-${golesVisita} (${golesTotales} goles). ${resultadoTexto}`);
 
-  delete db.partidos[matchId];
-  guardarDB(db);
+  // El borrado se hace con una lectura fresca, recién ahora, para no
+  // pisar cambios que otros partidos hayan guardado mientras se hacían
+  // las llamadas de arriba (historial, Telegram).
+  await conBloqueoDB(() => {
+    const db = leerDB();
+    delete db.partidos[matchId];
+    guardarDB(db);
+  });
 
   res.sendStatus(200);
 });
