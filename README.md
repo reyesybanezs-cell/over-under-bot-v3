@@ -96,11 +96,20 @@ programación de partidos en curso.
 - En cada chequeo se piden, en una sola llamada (2 créditos: `alternate_totals` + `btts`, 1 región): las 3 líneas de goles (1.5/2.5/3.5) y el mercado BTTS. Costo total: **8 créditos por partido**.
 - **Tendencia sostenida**: ya no se compara solo apertura vs. cierre. Se exige que la probabilidad implícita se haya movido en la misma dirección en los 3 intervalos (24h→6h→1h→5m), sin reversiones. Un salto grande pero errático NO dispara alerta.
 - Se aplica esa misma exigencia de tendencia sostenida al **BTTS**, no solo al Over/Under.
-- **La alerta OVER o UNDER solo se manda si las DOS cosas se cumplen a la vez**: el movimiento sostenido en la línea 2.5 (≥3 puntos porcentuales) Y una tendencia sostenida de BTTS que apunte en la misma dirección. Si falta cualquiera de las dos, el resultado es `⚠️ SIN APUESTA (Mercado Incierto)`. No hay niveles de confianza (ALTA/MEDIA/BAJA): solo OVER, UNDER, o SIN APUESTA.
+- **La alerta OVER o UNDER se manda cuando la línea 2.5 se movió ≥3 puntos porcentuales de forma sostenida.** El BTTS ya no es obligatorio: solo se informa en el mensaje si acompaña o no la dirección. Motivo: en los primeros 19 partidos reales, el BTTS solo se movió más de 3 puntos una vez, y exigirlo bloqueaba todas las señales. Cada alerta sale marcada **🧪 EXPERIMENTAL** porque todavía no hay datos suficientes para validar que la señal acierte más que el azar. Si no hay señal, el resultado es `⚠️ SIN APUESTA (Mercado Incierto)`. No hay niveles de confianza.
+- **Cuotas siempre registradas**: en el historial se guardan las cuotas de apertura (24h) y cierre (5m) de Over, Under, BTTS Sí y BTTS No de TODOS los partidos analizados, haya alerta o no. Sirve para medir calibración: por ejemplo, cuando la probabilidad implícita de cierre ronda el 55%, ¿qué porcentaje de veces sale realmente? Probabilidad implícita = `1/cuota`; para descontar el margen de la casa, dividí cada una por la suma de las dos del mismo mercado (Over+Under, o Sí+No).
 - **60 partidos garantizados por mes**: si el ritmo de partidos analizados va atrasado respecto a la meta, el sistema sube automáticamente el máximo diario (de 4 hasta 6) para recuperar terreno. 60 partidos × 8 créditos = 480 créditos/mes, dentro del límite gratis de 500.
 - **Selección de partidos**: mismas 13 ligas de antes (no se agregaron Colombia/Ecuador — no pude confirmar que The-Odds-API las cubra). Espacio mínimo entre partidos del mismo día: **2h30min** (antes 3h). Máximo normal: **4 partidos/día** (puede subir en "modo recuperación").
 
 ## Qué pasa con la tabla "en curso" de la web
+
+Ya no se pierde con las actualizaciones de código. Cada vez que se
+guarda algo localmente, también se manda una copia a una segunda hoja
+(`EstadoEnCurso`, se crea sola) dentro del mismo Google Sheet. Si Render
+se reinicia o redespliega y borra su disco, el bot recupera esa copia
+apenas arranca, antes de reprogramar los chequeos pendientes — así los
+partidos de hoy y mañana que ya estaban en curso no se pierden por
+actualizar el código.
 
 Se borra, pero no apenas termina el partido: un partido queda visible en
 la tabla de la web (y sigue "vivo" en el sistema) **hasta que le

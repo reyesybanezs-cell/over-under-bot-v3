@@ -674,6 +674,26 @@ async function ejecutarPrediccion(matchId) {
     partido.sostenidaUnder = analisisUnder.sostenida;
     partido.puntosUsados = `${clavesDisponibles.length}/${claves.length}`;
 
+    // Cuotas de apertura (24h) y cierre (5m) de AMBOS lados, siempre,
+    // haya alerta o no. Sirven para medir después qué tan bien calibrado
+    // está el mercado (ej: cuando la probabilidad implícita de cierre es
+    // ~55%, ¿qué porcentaje de veces sale realmente?). Se guardan los dos
+    // lados porque hace falta el par para descontar el margen de la casa.
+    const lineaApertura = partido.cuotas['24h'].lineas[LINEA_PRINCIPAL];
+    const lineaCierre = partido.cuotas['5m'].lineas[LINEA_PRINCIPAL];
+    partido.cuotaOverApertura = lineaApertura.over;
+    partido.cuotaOverCierre = lineaCierre.over;
+    partido.cuotaUnderApertura = lineaApertura.under;
+    partido.cuotaUnderCierre = lineaCierre.under;
+    const bttsApertura = partido.cuotas['24h'].btts;
+    const bttsCierre = partido.cuotas['5m'].btts;
+    if (bttsApertura && bttsCierre) {
+      partido.cuotaBttsSiApertura = bttsApertura.si;
+      partido.cuotaBttsSiCierre = bttsCierre.si;
+      partido.cuotaBttsNoApertura = bttsApertura.no;
+      partido.cuotaBttsNoCierre = bttsCierre.no;
+    }
+
     const bttsDisponible = clavesDisponibles.every((c) => partido.cuotas[c].btts);
     let analisisBtts = null;
     if (bttsDisponible) {
@@ -687,32 +707,30 @@ async function ejecutarPrediccion(matchId) {
     if (analisisOver.deltaTotal >= UMBRAL_MOVIMIENTO && analisisOver.sostenida) direccion = 'OVER';
     else if (analisisUnder.deltaTotal >= UMBRAL_MOVIMIENTO && analisisUnder.sostenida) direccion = 'UNDER';
 
-    let confirmaBtts = false;
-    let serieDireccion = null;
-    if (direccion && analisisBtts) {
-      serieDireccion = direccion === 'OVER' ? serieOver : serieUnder;
-      if (direccion === 'OVER') {
-        confirmaBtts = analisisBtts.deltaTotal >= UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
-      } else {
-        confirmaBtts = analisisBtts.deltaTotal <= -UMBRAL_MOVIMIENTO && analisisBtts.sostenida;
-      }
-    }
-
-    if (direccion && confirmaBtts) {
+    // El BTTS pasó de condición obligatoria a dato informativo: con el
+    // umbral de 3 puntos casi nunca se cumplía (en los primeros 19
+    // partidos reales solo 1 se movió tanto) y bloqueaba todas las señales.
+    // Ahora solo se reporta si acompaña o no a la dirección elegida.
+    if (direccion) {
       prediccion = direccion;
-      const emoji = direccion === 'OVER' ? '🚨 OVER 2.5 GOLES' : '🚨 UNDER 2.5 GOLES';
+      const serieDireccion = direccion === 'OVER' ? serieOver : serieUnder;
       const recorrido = clavesDisponibles.map((c, i) => `${c}: ${serieDireccion[i].toFixed(1)}%`).join(' → ');
+
+      let notaBtts = 'BTTS: sin datos.';
+      if (analisisBtts) {
+        const mueveMismoLado = direccion === 'OVER' ? analisisBtts.deltaTotal > 0 : analisisBtts.deltaTotal < 0;
+        const signo = analisisBtts.deltaTotal > 0 ? '+' : '';
+        const detalle = `${signo}${analisisBtts.deltaTotal.toFixed(1)} pts, ${analisisBtts.sostenida ? 'sostenido' : 'no sostenido'}`;
+        notaBtts = mueveMismoLado ? `BTTS acompaña (${detalle}).` : `BTTS no acompaña (${detalle}).`;
+      }
+
       mensaje =
-        `${emoji} - Tendencia Profesional en: ${nombrePartido}\n\n` +
+        `🧪 ${direccion} 2.5 GOLES (EXPERIMENTAL) en: ${nombrePartido}\n\n` +
         `Movimiento sostenido: ${recorrido}\n` +
-        `Confirmado por BTTS.` +
+        `${notaBtts}\n` +
+        `Señal sin validar todavía.` +
         notaFaltantes;
 
-      // Cuotas reales de la dirección elegida (para poder calcular
-      // rentabilidad real más adelante, no solo % de aciertos).
-      const cuotaCampo = direccion === 'OVER' ? 'over' : 'under';
-      partido.cuotaApertura = partido.cuotas['24h'].lineas[LINEA_PRINCIPAL][cuotaCampo];
-      partido.cuotaCierre = partido.cuotas['5m'].lineas[LINEA_PRINCIPAL][cuotaCampo];
     } else {
       mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}` + notaFaltantes;
     }
@@ -836,8 +854,8 @@ app.get('/api/test-historial/:secret', async (req, res) => {
     golesTotales: 3,
     marcador: '2-1',
     acierto: true,
-    cuotaApertura: 1.95,
-    cuotaCierre: 1.70,
+    cuotaOverApertura: 2.0,
+    cuotaOverCierre: 1.81,
     puntosUsados: '4/4',
     movimientoOver: 5.2,
     sostenidaOver: true,
@@ -845,6 +863,12 @@ app.get('/api/test-historial/:secret', async (req, res) => {
     sostenidaUnder: true,
     movimientoBtts: 4.5,
     sostenidaBtts: true,
+    cuotaUnderApertura: 1.85,
+    cuotaUnderCierre: 2.05,
+    cuotaBttsSiApertura: 1.80,
+    cuotaBttsSiCierre: 1.70,
+    cuotaBttsNoApertura: 2.00,
+    cuotaBttsNoCierre: 2.10,
   });
 
   if (!guardado) {
@@ -911,8 +935,8 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     golesTotales,
     marcador: `${golesLocal}-${golesVisita}`,
     acierto,
-    cuotaApertura: partido.cuotaApertura ?? '',
-    cuotaCierre: partido.cuotaCierre ?? '',
+    cuotaOverApertura: partido.cuotaOverApertura ?? '',
+    cuotaOverCierre: partido.cuotaOverCierre ?? '',
     puntosUsados: partido.puntosUsados ?? '',
     movimientoOver: partido.movimientoOver ?? '',
     sostenidaOver: partido.sostenidaOver ?? '',
@@ -920,6 +944,12 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     sostenidaUnder: partido.sostenidaUnder ?? '',
     movimientoBtts: partido.movimientoBtts ?? '',
     sostenidaBtts: partido.sostenidaBtts ?? '',
+    cuotaUnderApertura: partido.cuotaUnderApertura ?? '',
+    cuotaUnderCierre: partido.cuotaUnderCierre ?? '',
+    cuotaBttsSiApertura: partido.cuotaBttsSiApertura ?? '',
+    cuotaBttsSiCierre: partido.cuotaBttsSiCierre ?? '',
+    cuotaBttsNoApertura: partido.cuotaBttsNoApertura ?? '',
+    cuotaBttsNoCierre: partido.cuotaBttsNoCierre ?? '',
   });
 
   const resultadoTexto = acierto === true ? '🎉 ¡Acertaste!' : acierto === false ? '❌ No acertó.' : 'ℹ️ Registrado (no hubo apuesta).';
