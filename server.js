@@ -674,6 +674,12 @@ async function ejecutarPrediccion(matchId) {
     partido.sostenidaUnder = analisisUnder.sostenida;
     partido.puntosUsados = `${clavesDisponibles.length}/${claves.length}`;
 
+    // Elección forzada: a diferencia de "prediccion" (que puede quedar en
+    // SIN_APUESTA), esto SIEMPRE elige un lado — el que tenga el mayor
+    // movimiento de probabilidad implícita, sin exigir ningún umbral. Es
+    // un registro aparte, no una sugerencia de apuesta.
+    partido.direccionForzada = partido.movimientoOver >= partido.movimientoUnder ? 'OVER' : 'UNDER';
+
     // Cuotas de apertura (24h) y cierre (5m) de AMBOS lados, siempre,
     // haya alerta o no. Sirven para medir después qué tan bien calibrado
     // está el mercado (ej: cuando la probabilidad implícita de cierre es
@@ -869,6 +875,8 @@ app.get('/api/test-historial/:secret', async (req, res) => {
     cuotaBttsSiCierre: 1.70,
     cuotaBttsNoApertura: 2.00,
     cuotaBttsNoCierre: 2.10,
+    direccionForzada: 'OVER',
+    aciertoForzado: true,
   });
 
   if (!guardado) {
@@ -926,6 +934,14 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
   if (partido.prediccion === 'OVER') acierto = golesTotales > 2.5;
   else if (partido.prediccion === 'UNDER') acierto = golesTotales < 2.5;
 
+  // Elección forzada (siempre hay una, salvo que nunca se haya podido
+  // calcular el movimiento por falta de datos mínimos). Regla pedida:
+  // si eligió OVER, se valida con más de 0.5 goles; si eligió UNDER,
+  // con menos de 4.5 goles.
+  let aciertoForzado = null;
+  if (partido.direccionForzada === 'OVER') aciertoForzado = golesTotales > 0.5;
+  else if (partido.direccionForzada === 'UNDER') aciertoForzado = golesTotales < 4.5;
+
   await guardarEnHistorial({
     fecha: new Date().toISOString(),
     liga: partido.sportKey,
@@ -950,6 +966,8 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     cuotaBttsSiCierre: partido.cuotaBttsSiCierre ?? '',
     cuotaBttsNoApertura: partido.cuotaBttsNoApertura ?? '',
     cuotaBttsNoCierre: partido.cuotaBttsNoCierre ?? '',
+    direccionForzada: partido.direccionForzada ?? '',
+    aciertoForzado,
   });
 
   const resultadoTexto = acierto === true ? '🎉 ¡Acertaste!' : acierto === false ? '❌ No acertó.' : 'ℹ️ Registrado (no hubo apuesta).';
