@@ -653,7 +653,9 @@ async function ejecutarPrediccion(matchId) {
   let prediccion = 'SIN_APUESTA';
 
   if (!datosMinimos) {
-    mensaje = `⚠️ SIN APUESTA (Datos insuficientes) en: ${nombrePartido}`;
+    mensaje =
+      `⚠️ SIN APUESTA (Datos insuficientes) en: ${nombrePartido}\n\n` +
+      `🎯 Elección forzada: no se pudo calcular (faltan los chequeos de apertura o cierre, no hay con qué comparar).`;
   } else {
     const notaFaltantes =
       faltantes.length > 0
@@ -734,11 +736,15 @@ async function ejecutarPrediccion(matchId) {
         `🧪 ${direccion} 2.5 GOLES (EXPERIMENTAL) en: ${nombrePartido}\n\n` +
         `Movimiento sostenido: ${recorrido}\n` +
         `${notaBtts}\n` +
-        `Señal sin validar todavía.` +
+        `Señal sin validar todavía.\n` +
+        `🎯 Elección forzada (registro, no es sugerencia): ${partido.direccionForzada}` +
         notaFaltantes;
 
     } else {
-      mensaje = `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}` + notaFaltantes;
+      mensaje =
+        `⚠️ SIN APUESTA (Mercado Incierto) en: ${nombrePartido}\n\n` +
+        `🎯 Elección forzada (registro, no es sugerencia): ${partido.direccionForzada}` +
+        notaFaltantes;
     }
   }
 
