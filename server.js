@@ -44,13 +44,13 @@ const CHECKPOINTS = [
   { clave: '5m', ms: 5 * 60 * 1000 },
 ];
 
-const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5];
-const LINEA_PRINCIPAL = '2.5';
+const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
+const LINEA_PRINCIPAL = '3.5'; // cambiado de 2.5 a 3.5
 const UMBRAL_MOVIMIENTO = 3; // puntos porcentuales de probabilidad implícita
 
 const GAP_MINIMO_MS = 2.5 * 60 * 60 * 1000; // 2h30min entre partidos del mismo día
 const MAX_PARTIDOS_NORMAL = 4;
-const OBJETIVO_MENSUAL = 60; // meta de partidos analizados por mes
+const OBJETIVO_MENSUAL = 120; // meta de partidos analizados por mes (subió al sacar BTTS: la mitad de créditos por partido)
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '08:00';
 const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
@@ -332,10 +332,11 @@ async function obtenerEventosLiga(sportKey) {
   }
 }
 
-// Trae, en UNA sola llamada (2 créditos: alternate_totals + btts, 1 región),
-// las 3 líneas de goles (1.5/2.5/3.5) Y el mercado BTTS de un partido.
+// Trae, en UNA sola llamada (1 crédito: alternate_totals, 1 región), las
+// 4 líneas de goles que rastreamos (1.5/2.5/3.5/4.5). BTTS se sacó por
+// completo: no se pide, no se guarda, no influye en nada.
 async function obtenerCuotasTotales(sportKey, eventId) {
-  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=alternate_totals,btts&oddsFormat=decimal`;
+  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events/${eventId}/odds?apiKey=${ODDS_API_KEY}&regions=eu&markets=alternate_totals&oddsFormat=decimal`;
   try {
     const res = await fetch(url);
     if (!res.ok) {
@@ -346,24 +347,15 @@ async function obtenerCuotasTotales(sportKey, eventId) {
 
     const acumuladorLineas = {};
     for (const p of LINEAS_A_RASTREAR) acumuladorLineas[String(p)] = { overs: [], unders: [] };
-    const acumuladorBtts = { si: [], no: [] };
 
     for (const casa of data.bookmakers || []) {
       const mercadoTotals = casa.markets.find((m) => m.key === 'alternate_totals');
-      if (mercadoTotals) {
-        for (const outcome of mercadoTotals.outcomes) {
-          if (!LINEAS_A_RASTREAR.includes(outcome.point)) continue;
-          const clave = String(outcome.point);
-          if (outcome.name === 'Over') acumuladorLineas[clave].overs.push(outcome.price);
-          if (outcome.name === 'Under') acumuladorLineas[clave].unders.push(outcome.price);
-        }
-      }
-      const mercadoBtts = casa.markets.find((m) => m.key === 'btts');
-      if (mercadoBtts) {
-        for (const outcome of mercadoBtts.outcomes) {
-          if (outcome.name === 'Yes') acumuladorBtts.si.push(outcome.price);
-          if (outcome.name === 'No') acumuladorBtts.no.push(outcome.price);
-        }
+      if (!mercadoTotals) continue;
+      for (const outcome of mercadoTotals.outcomes) {
+        if (!LINEAS_A_RASTREAR.includes(outcome.point)) continue;
+        const clave = String(outcome.point);
+        if (outcome.name === 'Over') acumuladorLineas[clave].overs.push(outcome.price);
+        if (outcome.name === 'Under') acumuladorLineas[clave].unders.push(outcome.price);
       }
     }
 
@@ -379,12 +371,7 @@ async function obtenerCuotasTotales(sportKey, eventId) {
           : null;
     }
 
-    const btts =
-      acumuladorBtts.si.length && acumuladorBtts.no.length
-        ? { si: Number(promedio(acumuladorBtts.si).toFixed(2)), no: Number(promedio(acumuladorBtts.no).toFixed(2)) }
-        : null;
-
-    return { lineas, btts };
+    return { lineas };
   } catch (err) {
     console.error(`Error de red obteniendo cuotas del evento ${eventId}:`, err.message);
     return null;
@@ -606,7 +593,7 @@ async function ejecutarChequeo(matchId, claveCheckpoint) {
 }
 
 // ==================================================================
-// ALGORITMO DE PREDICCIÓN (tendencia sostenida, Over/Under + BTTS)
+// ALGORITMO DE PREDICCIÓN (tendencia sostenida, línea 3.5, sin BTTS)
 // ==================================================================
 
 function calcularProbabilidadImplicita(cuotaDecimal) {
@@ -667,75 +654,73 @@ async function ejecutarPrediccion(matchId) {
     const analisisOver = analizarSerie(serieOver);
     const analisisUnder = analizarSerie(serieUnder);
 
-    // Diagnóstico: se guarda SIEMPRE que haya datos mínimos, dispare o no
-    // una predicción. Es lo que permite, con el tiempo, revisar si el
-    // umbral de 3% es razonable o casi nunca se alcanza.
+    // Diagnóstico de la línea principal (3.5): se guarda SIEMPRE que haya
+    // datos mínimos, dispare o no una predicción.
     partido.movimientoOver = Number(analisisOver.deltaTotal.toFixed(1));
     partido.sostenidaOver = analisisOver.sostenida;
     partido.movimientoUnder = Number(analisisUnder.deltaTotal.toFixed(1));
     partido.sostenidaUnder = analisisUnder.sostenida;
     partido.puntosUsados = `${clavesDisponibles.length}/${claves.length}`;
 
-    // Elección forzada: a diferencia de "prediccion" (que puede quedar en
-    // SIN_APUESTA), esto SIEMPRE elige un lado — el que tenga el mayor
-    // movimiento de probabilidad implícita, sin exigir ningún umbral. Es
-    // un registro aparte, no una sugerencia de apuesta.
-    partido.direccionForzada = partido.movimientoOver >= partido.movimientoUnder ? 'OVER' : 'UNDER';
-
-    // Cuotas de apertura (24h) y cierre (5m) de AMBOS lados, siempre,
-    // haya alerta o no. Sirven para medir después qué tan bien calibrado
-    // está el mercado (ej: cuando la probabilidad implícita de cierre es
-    // ~55%, ¿qué porcentaje de veces sale realmente?). Se guardan los dos
-    // lados porque hace falta el par para descontar el margen de la casa.
+    // Cuotas de apertura (24h) y cierre (5m) de la línea principal, de
+    // AMBOS lados, siempre. Sirven para medir calibración después.
     const lineaApertura = partido.cuotas['24h'].lineas[LINEA_PRINCIPAL];
     const lineaCierre = partido.cuotas['5m'].lineas[LINEA_PRINCIPAL];
     partido.cuotaOverApertura = lineaApertura.over;
     partido.cuotaOverCierre = lineaCierre.over;
     partido.cuotaUnderApertura = lineaApertura.under;
     partido.cuotaUnderCierre = lineaCierre.under;
-    const bttsApertura = partido.cuotas['24h'].btts;
-    const bttsCierre = partido.cuotas['5m'].btts;
-    if (bttsApertura && bttsCierre) {
-      partido.cuotaBttsSiApertura = bttsApertura.si;
-      partido.cuotaBttsSiCierre = bttsCierre.si;
-      partido.cuotaBttsNoApertura = bttsApertura.no;
-      partido.cuotaBttsNoCierre = bttsCierre.no;
+
+    // Análisis individual de CADA línea rastreada (1.5/2.5/3.5/4.5), no
+    // solo la principal. Se guarda siempre, sea cual sea el resultado, y
+    // además alimenta la elección forzada de abajo.
+    const analisisPorLinea = {}; // { '1.5': {over:{...}, under:{...}, probAperturaOver}, ... }
+    for (const p of LINEAS_A_RASTREAR) {
+      const clave = String(p);
+      const disponibleEnTodos = clavesDisponibles.every((c) => partido.cuotas[c].lineas[clave]);
+      if (!disponibleEnTodos) continue;
+
+      const sOver = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[clave].over));
+      const sUnder = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].lineas[clave].under));
+      const aOver = analizarSerie(sOver);
+      const aUnder = analizarSerie(sUnder);
+      const sufijo = clave.replace('.', '');
+
+      partido[`mov${sufijo}Over`] = Number(aOver.deltaTotal.toFixed(1));
+      partido[`sost${sufijo}Over`] = aOver.sostenida;
+      partido[`mov${sufijo}Under`] = Number(aUnder.deltaTotal.toFixed(1));
+      partido[`sost${sufijo}Under`] = aUnder.sostenida;
+
+      analisisPorLinea[clave] = { movimientoOver: aOver.deltaTotal, probAperturaOver: sOver[0] };
     }
 
-    const bttsDisponible = clavesDisponibles.every((c) => partido.cuotas[c].btts);
-    let analisisBtts = null;
-    if (bttsDisponible) {
-      const serieBttsSi = clavesDisponibles.map((c) => calcularProbabilidadImplicita(partido.cuotas[c].btts.si));
-      analisisBtts = analizarSerie(serieBttsSi);
-      partido.movimientoBtts = Number(analisisBtts.deltaTotal.toFixed(1));
-      partido.sostenidaBtts = analisisBtts.sostenida;
+    // Elección forzada en la línea principal (3.5), pero calculada con la
+    // info de TODAS las líneas: el movimiento de cada línea se pondera
+    // más fuerte cuanto más "pareja" (cerca del 50%) estaba esa línea al
+    // abrir — una línea que ya abría muy decidida aporta poco.
+    let sumaPonderada = 0;
+    let sumaPesos = 0;
+    for (const clave of Object.keys(analisisPorLinea)) {
+      const { movimientoOver, probAperturaOver } = analisisPorLinea[clave];
+      const peso = 1 - Math.abs(probAperturaOver - 50) / 50; // 1 = perfectamente parejo, 0 = casi decidido
+      sumaPonderada += peso * movimientoOver;
+      sumaPesos += peso;
     }
+    partido.senalPonderada = sumaPesos > 0 ? Number((sumaPonderada / sumaPesos).toFixed(2)) : 0;
+    partido.direccionForzada = partido.senalPonderada >= 0 ? 'OVER' : 'UNDER';
 
     let direccion = null;
     if (analisisOver.deltaTotal >= UMBRAL_MOVIMIENTO && analisisOver.sostenida) direccion = 'OVER';
     else if (analisisUnder.deltaTotal >= UMBRAL_MOVIMIENTO && analisisUnder.sostenida) direccion = 'UNDER';
 
-    // El BTTS pasó de condición obligatoria a dato informativo: con el
-    // umbral de 3 puntos casi nunca se cumplía (en los primeros 19
-    // partidos reales solo 1 se movió tanto) y bloqueaba todas las señales.
-    // Ahora solo se reporta si acompaña o no a la dirección elegida.
     if (direccion) {
       prediccion = direccion;
       const serieDireccion = direccion === 'OVER' ? serieOver : serieUnder;
       const recorrido = clavesDisponibles.map((c, i) => `${c}: ${serieDireccion[i].toFixed(1)}%`).join(' → ');
 
-      let notaBtts = 'BTTS: sin datos.';
-      if (analisisBtts) {
-        const mueveMismoLado = direccion === 'OVER' ? analisisBtts.deltaTotal > 0 : analisisBtts.deltaTotal < 0;
-        const signo = analisisBtts.deltaTotal > 0 ? '+' : '';
-        const detalle = `${signo}${analisisBtts.deltaTotal.toFixed(1)} pts, ${analisisBtts.sostenida ? 'sostenido' : 'no sostenido'}`;
-        notaBtts = mueveMismoLado ? `BTTS acompaña (${detalle}).` : `BTTS no acompaña (${detalle}).`;
-      }
-
       mensaje =
-        `🧪 ${direccion} 2.5 GOLES (EXPERIMENTAL) en: ${nombrePartido}\n\n` +
+        `🧪 ${direccion} ${LINEA_PRINCIPAL} GOLES (EXPERIMENTAL) en: ${nombrePartido}\n\n` +
         `Movimiento sostenido: ${recorrido}\n` +
-        `${notaBtts}\n` +
         `Señal sin validar todavía.\n` +
         `🎯 Elección forzada (registro, no es sugerencia): ${partido.direccionForzada}` +
         notaFaltantes;
@@ -873,16 +858,15 @@ app.get('/api/test-historial/:secret', async (req, res) => {
     sostenidaOver: true,
     movimientoUnder: -3.8,
     sostenidaUnder: true,
-    movimientoBtts: 4.5,
-    sostenidaBtts: true,
     cuotaUnderApertura: 1.85,
     cuotaUnderCierre: 2.05,
-    cuotaBttsSiApertura: 1.80,
-    cuotaBttsSiCierre: 1.70,
-    cuotaBttsNoApertura: 2.00,
-    cuotaBttsNoCierre: 2.10,
     direccionForzada: 'OVER',
     aciertoForzado: true,
+    senalPonderada: 2.1,
+    mov15Over: 1.1, sost15Over: true, mov15Under: -1.1, sost15Under: true,
+    mov25Over: 3.4, sost25Over: true, mov25Under: -3.4, sost25Under: true,
+    mov35Over: 5.2, sost35Over: true, mov35Under: -3.8, sost35Under: true,
+    mov45Over: 2.0, sost45Over: false, mov45Under: -1.5, sost45Under: false,
   });
 
   if (!guardado) {
@@ -937,8 +921,9 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
   const golesTotales = golesLocal + golesVisita;
 
   let acierto = null;
-  if (partido.prediccion === 'OVER') acierto = golesTotales > 2.5;
-  else if (partido.prediccion === 'UNDER') acierto = golesTotales < 2.5;
+  const lineaNum = parseFloat(LINEA_PRINCIPAL);
+  if (partido.prediccion === 'OVER') acierto = golesTotales > lineaNum;
+  else if (partido.prediccion === 'UNDER') acierto = golesTotales < lineaNum;
 
   // Elección forzada (siempre hay una, salvo que nunca se haya podido
   // calcular el movimiento por falta de datos mínimos). Regla pedida:
@@ -964,16 +949,27 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     sostenidaOver: partido.sostenidaOver ?? '',
     movimientoUnder: partido.movimientoUnder ?? '',
     sostenidaUnder: partido.sostenidaUnder ?? '',
-    movimientoBtts: partido.movimientoBtts ?? '',
-    sostenidaBtts: partido.sostenidaBtts ?? '',
     cuotaUnderApertura: partido.cuotaUnderApertura ?? '',
     cuotaUnderCierre: partido.cuotaUnderCierre ?? '',
-    cuotaBttsSiApertura: partido.cuotaBttsSiApertura ?? '',
-    cuotaBttsSiCierre: partido.cuotaBttsSiCierre ?? '',
-    cuotaBttsNoApertura: partido.cuotaBttsNoApertura ?? '',
-    cuotaBttsNoCierre: partido.cuotaBttsNoCierre ?? '',
     direccionForzada: partido.direccionForzada ?? '',
     aciertoForzado,
+    senalPonderada: partido.senalPonderada ?? '',
+    mov15Over: partido.mov15Over ?? '',
+    sost15Over: partido.sost15Over ?? '',
+    mov15Under: partido.mov15Under ?? '',
+    sost15Under: partido.sost15Under ?? '',
+    mov25Over: partido.mov25Over ?? '',
+    sost25Over: partido.sost25Over ?? '',
+    mov25Under: partido.mov25Under ?? '',
+    sost25Under: partido.sost25Under ?? '',
+    mov35Over: partido.mov35Over ?? '',
+    sost35Over: partido.sost35Over ?? '',
+    mov35Under: partido.mov35Under ?? '',
+    sost35Under: partido.sost35Under ?? '',
+    mov45Over: partido.mov45Over ?? '',
+    sost45Over: partido.sost45Over ?? '',
+    mov45Under: partido.mov45Under ?? '',
+    sost45Under: partido.sost45Under ?? '',
   });
 
   const resultadoTexto = acierto === true ? '🎉 ¡Acertaste!' : acierto === false ? '❌ No acertó.' : 'ℹ️ Registrado (no hubo apuesta).';
