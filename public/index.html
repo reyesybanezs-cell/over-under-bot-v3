@@ -201,7 +201,7 @@ const CHECKPOINTS = [
   { clave: '5m', etiqueta: '5m antes' },
 ];
 
-const LINEAS = ['1.5', '2.5', '3.5'];
+const LINEAS = ['1.5', '2.5', '3.5', '4.5'];
 
 async function refrescarEstadisticas(){
   try{
@@ -233,11 +233,6 @@ function celda(dato){
   return `<span class="over-val">${dato.over}</span>/<span class="under-val">${dato.under}</span>`;
 }
 
-function celdaBtts(dato){
-  if (!dato) return '<span class="pendiente">—</span>';
-  return `<span class="over-val">${dato.si}</span>/<span class="under-val">${dato.no}</span>`;
-}
-
 const MESES_CORTO = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 function formatearDiaCorto(diaLocal){
   const [, mes, dia] = diaLocal.split('-').map(Number);
@@ -249,9 +244,8 @@ function renderPartido(partido){
   const filas = CHECKPOINTS.map(cp => {
     const chequeo = partido.cuotas && partido.cuotas[cp.clave];
     const lineas = chequeo && chequeo.lineas;
-    const btts = chequeo && chequeo.btts;
     const celdas = LINEAS.map(l => `<td>${celda(lineas && lineas[l])}</td>`).join('');
-    return `<tr><td>${cp.etiqueta}</td>${celdas}<td>${celdaBtts(btts)}</td></tr>`;
+    return `<tr><td>${cp.etiqueta}</td>${celdas}</tr>`;
   }).join('');
 
   return `
@@ -261,7 +255,7 @@ function renderPartido(partido){
       <div class="fecha">${formatearFecha(partido.commenceTime)}</div>
       <div class="tabla-scroll">
         <table class="cuotas">
-          <thead><tr><th>Chequeo</th><th>1.5 (O/U)</th><th>2.5 (O/U)</th><th>3.5 (O/U)</th><th>BTTS (Sí/No)</th></tr></thead>
+          <thead><tr><th>Chequeo</th><th>1.5 (O/U)</th><th>2.5 (O/U)</th><th>3.5 (O/U)</th><th>4.5 (O/U)</th></tr></thead>
           <tbody>${filas}</tbody>
         </table>
       </div>
