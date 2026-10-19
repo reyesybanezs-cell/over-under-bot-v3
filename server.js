@@ -49,10 +49,14 @@ const LINEA_PRINCIPAL = '3.5'; // cambiado de 2.5 a 3.5
 const UMBRAL_MOVIMIENTO = 3; // puntos porcentuales de probabilidad implícita
 
 const GAP_MINIMO_MS = 2.5 * 60 * 60 * 1000; // 2h30min entre partidos del mismo día
-const MAX_PARTIDOS_NORMAL = 4;
+// Solo se consideran partidos que INICIEN entre las 6:00 y las 23:00 hora
+// local (ZONA_HORARIA). Ya no hay tope de partidos por día: el límite es
+// mensual (OBJETIVO_MENSUAL), para no pasarse de los créditos de la API.
+const VENTANA_INICIO_MIN = 6 * 60;
+const VENTANA_FIN_MIN = 23 * 60;
 const OBJETIVO_MENSUAL = 120; // meta de partidos analizados por mes (subió al sacar BTTS: la mitad de créditos por partido)
 
-const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '08:00';
+const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
 const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
 
 let trabajosActivos = [];
@@ -276,41 +280,6 @@ function calcularEstadisticas(historial) {
   return { totalAnalizados: ordenado.length, totalConApuesta: total, aciertos, porcentajeAciertos, racha, tipoRacha };
 }
 
-async function obtenerConteoMesActual() {
-  try {
-    const historial = await obtenerHistorial();
-    const ahora = new Date();
-    return historial.filter((h) => {
-      const f = new Date(h.fecha);
-      return f.getUTCMonth() === ahora.getUTCMonth() && f.getUTCFullYear() === ahora.getUTCFullYear();
-    }).length;
-  } catch (err) {
-    console.error('No se pudo obtener el conteo mensual del historial:', err.message);
-    return null;
-  }
-}
-
-// "Modo recuperación": si vas atrasado respecto a la meta mensual de 60
-// partidos, sube el máximo de partidos permitidos ese día para recuperar
-// terreno. Si no se puede determinar el conteo (ej. Sheets caído), usa
-// el máximo normal para no arriesgar nada.
-async function calcularMaxPartidosHoy() {
-  const analizados = await obtenerConteoMesActual();
-  if (analizados === null) return MAX_PARTIDOS_NORMAL;
-
-  const ahora = new Date();
-  const diaDelMes = parseInt(
-    new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA, day: '2-digit' }).format(ahora),
-    10
-  );
-  const diasEnElMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0).getDate();
-  const ritmoEsperado = OBJETIVO_MENSUAL * (diaDelMes / diasEnElMes);
-  const deficit = ritmoEsperado - analizados;
-
-  if (deficit >= 6) return 6;
-  if (deficit >= 3) return 5;
-  return MAX_PARTIDOS_NORMAL;
-}
 
 // ==================================================================
 // THE ODDS API
@@ -409,6 +378,27 @@ function obtenerDiaLocal(fechaIso, zona) {
   );
 }
 
+function minutosDelDiaLocal(fechaIso) {
+  const partes = new Intl.DateTimeFormat('en-GB', {
+    timeZone: ZONA_HORARIA,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(fechaIso));
+  const h = parseInt(partes.find((p) => p.type === 'hour').value, 10);
+  const m = parseInt(partes.find((p) => p.type === 'minute').value, 10);
+  return h * 60 + m;
+}
+
+function enVentanaHoraria(fechaIso) {
+  const min = minutosDelDiaLocal(fechaIso);
+  return min >= VENTANA_INICIO_MIN && min <= VENTANA_FIN_MIN;
+}
+
+function etiquetaDePartido(i) {
+  return i < 26 ? String.fromCharCode(65 + i) : `P${i + 1}`;
+}
+
 async function buscarYProgramarPartidos() {
   const ahora = Date.now();
   const VEINTICUATRO_HORAS = 24 * 60 * 60 * 1000;
@@ -421,6 +411,7 @@ async function buscarYProgramarPartidos() {
 
   todosLosEventos = todosLosEventos
     .filter((e) => new Date(e.commence_time).getTime() > ahora)
+    .filter((e) => enVentanaHoraria(e.commence_time))
     .sort((a, b) => new Date(a.commence_time) - new Date(b.commence_time));
 
   if (todosLosEventos.length === 0) {
@@ -461,7 +452,17 @@ async function buscarYProgramarPartidos() {
       return { bloqueado: true, mensaje: msg };
     }
 
-    const maxPartidosHoy = await calcularMaxPartidosHoy();
+    // Tope mensual (protege los créditos de la API). Cuenta los partidos
+    // SELECCIONADOS en el mes, hayas contestado el marcador o no, porque
+    // cada uno consume créditos igual.
+    const mesActual = obtenerDiaLocal(new Date().toISOString(), ZONA_HORARIA).slice(0, 7);
+    if (!db.contadorMes || db.contadorMes.mes !== mesActual) db.contadorMes = { mes: mesActual, seleccionados: 0 };
+    const restantes = OBJETIVO_MENSUAL - db.contadorMes.seleccionados;
+    if (restantes <= 0) {
+      const msg = `ℹ️ Ya se programaron los ${OBJETIVO_MENSUAL} partidos de ${mesActual} (tope mensual para no pasarse de los créditos). Se retoma el mes que viene.`;
+      console.log(msg);
+      return { bloqueado: true, mensaje: msg };
+    }
 
     const eventosDelDia = todosLosEventos.filter(
       (e) =>
@@ -472,7 +473,7 @@ async function buscarYProgramarPartidos() {
     const seleccionados = [anclaDelDia];
     let ultimoTiempo = new Date(anclaDelDia.commence_time).getTime();
     for (const evento of eventosDelDia) {
-      if (seleccionados.length >= maxPartidosHoy) break;
+      if (seleccionados.length >= restantes) break;
       if (evento.id === anclaDelDia.id) continue;
       const tiempoEvento = new Date(evento.commence_time).getTime();
       if (tiempoEvento - ultimoTiempo >= GAP_MINIMO_MS) {
@@ -481,27 +482,27 @@ async function buscarYProgramarPartidos() {
       }
     }
 
-    const LETRAS = ['A', 'B', 'C', 'D', 'E', 'F'];
     seleccionados.forEach((evento, i) => {
-      const registro = crearRegistroPartido(evento, diaSeleccionado, LETRAS[i]);
+      const registro = crearRegistroPartido(evento, diaSeleccionado, etiquetaDePartido(i));
       db.partidos[evento.id] = registro;
       programarChequeos(evento.id, registro);
     });
+    db.contadorMes.seleccionados += seleccionados.length;
     guardarDB(db);
 
-    return { bloqueado: false, seleccionados, LETRAS };
+    return { bloqueado: false, seleccionados };
   });
 
   if (resultadoBusqueda.bloqueado) {
     return { ok: false, mensaje: resultadoBusqueda.mensaje };
   }
 
-  const { seleccionados, LETRAS } = resultadoBusqueda;
+  const { seleccionados } = resultadoBusqueda;
   const emojisLetra = { A: '🅰️', B: '🅱️', C: '🇨', D: '🇩', E: '🇪', F: '🇫' };
-  const bloques = seleccionados.map(
-    (evento, i) =>
-      `${emojisLetra[LETRAS[i]]} ${evento.home_team} vs ${evento.away_team}\n🕒 ${formatearFecha(evento.commence_time)}`
-  );
+  const bloques = seleccionados.map((evento, i) => {
+    const letra = etiquetaDePartido(i);
+    return `${emojisLetra[letra] || `▫️${letra}`} ${evento.home_team} vs ${evento.away_team}\n🕒 ${formatearFecha(evento.commence_time)}`;
+  });
   const mensaje = `✅ ${seleccionados.length} partido(s) programado(s) para el ${diaSeleccionado}:\n\n${bloques.join('\n\n')}`;
   await enviarTelegram(mensaje);
 
