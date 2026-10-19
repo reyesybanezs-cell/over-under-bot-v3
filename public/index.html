@@ -169,7 +169,7 @@
     <span class="bola">⚽</span>
     <h1>Rastreador Over/Under</h1>
   </div>
-  <p class="sub">Selecciona hasta 4 partidos del día, sigue el movimiento de sus cuotas de goles y recibe la alerta directo en Telegram.</p>
+  <p class="sub">Selecciona los partidos del día (entre las 6:00 y las 23:00, hora de Perú), sigue el movimiento de sus cuotas de goles y recibe la alerta directo en Telegram.</p>
 
   <div class="stats" id="stats">
     <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% aciertos</div></div>
@@ -181,7 +181,7 @@
   <div id="estadoTexto"></div>
 
   <div class="tarjetas" id="tarjetas">
-    <div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 4, o más en días de recuperación).</div>
+    <div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día.</div>
   </div>
 </main>
 
@@ -270,7 +270,7 @@ async function refrescarEstado(){
     const partidos = data.partidos || [];
 
     if (partidos.length === 0){
-      tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día (hasta 4, o más en días de recuperación).</div>';
+      tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día.</div>';
       return;
     }
     tarjetas.innerHTML = partidos.map(p => renderPartido(p)).join('');
