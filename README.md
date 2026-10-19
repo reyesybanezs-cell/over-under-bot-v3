@@ -1,6 +1,6 @@
 # Rastreador Over/Under + BTTS
 
-Web app en Node.js + Express que selecciona hasta 4 partidos de fútbol al
+Web app en Node.js + Express que selecciona los partidos de fútbol del
 día, rastrea el movimiento de sus cuotas (goles y BTTS) en 4 momentos del
 día, te manda la sugerencia a Telegram, y guarda un historial permanente
 de aciertos que vos mismo alimentás respondiendo el marcador final.
@@ -92,15 +92,17 @@ programación de partidos en curso.
 
 ## Cómo funciona ahora (resumen de la lógica)
 
-- **4 puntos de chequeo por partido**: 24h, 6h, 1h y 5 minutos antes del inicio.
-- En cada chequeo se piden, en una sola llamada (2 créditos: `alternate_totals` + `btts`, 1 región): las 3 líneas de goles (1.5/2.5/3.5) y el mercado BTTS. Costo total: **8 créditos por partido**.
-- **Tendencia sostenida**: ya no se compara solo apertura vs. cierre. Se exige que la probabilidad implícita se haya movido en la misma dirección en los 3 intervalos (24h→6h→1h→5m), sin reversiones. Un salto grande pero errático NO dispara alerta.
-- Se aplica esa misma exigencia de tendencia sostenida al **BTTS**, no solo al Over/Under.
-- **La alerta OVER o UNDER se manda cuando la línea 2.5 se movió ≥3 puntos porcentuales de forma sostenida.** El BTTS ya no es obligatorio: solo se informa en el mensaje si acompaña o no la dirección. Motivo: en los primeros 19 partidos reales, el BTTS solo se movió más de 3 puntos una vez, y exigirlo bloqueaba todas las señales. Cada alerta sale marcada **🧪 EXPERIMENTAL** porque todavía no hay datos suficientes para validar que la señal acierte más que el azar. Si no hay señal, el resultado es `⚠️ SIN APUESTA (Mercado Incierto)`. No hay niveles de confianza.
-- **Cuotas siempre registradas**: en el historial se guardan las cuotas de apertura (24h) y cierre (5m) de Over, Under, BTTS Sí y BTTS No de TODOS los partidos analizados, haya alerta o no. Sirve para medir calibración: por ejemplo, cuando la probabilidad implícita de cierre ronda el 55%, ¿qué porcentaje de veces sale realmente? Probabilidad implícita = `1/cuota`; para descontar el margen de la casa, dividí cada una por la suma de las dos del mismo mercado (Over+Under, o Sí+No).
-- **Elección forzada (`direccionForzada` / `aciertoForzado`)**: columnas aparte de `prediccion`/`acierto`, no son una sugerencia de apuesta. En cada partido se elige siempre OVER o UNDER (el que tenga mayor movimiento de probabilidad implícita, sin exigir ningún umbral), y al final se registra: si eligió OVER, si hubo más de 0.5 goles; si eligió UNDER, si hubo menos de 4.5 goles. Sirve como punto de comparación frente a `prediccion` (que sí es selectiva). Aviso: esos dos umbrales (0.5 y 4.5) se cumplen casi siempre en fútbol, así que `aciertoForzado` va a salir TRUE la gran mayoría de las veces — es esperable, no un error.
-- **60 partidos garantizados por mes**: si el ritmo de partidos analizados va atrasado respecto a la meta, el sistema sube automáticamente el máximo diario (de 4 hasta 6) para recuperar terreno. 60 partidos × 8 créditos = 480 créditos/mes, dentro del límite gratis de 500.
-- **Selección de partidos**: mismas 13 ligas de antes (no se agregaron Colombia/Ecuador — no pude confirmar que The-Odds-API las cubra). Espacio mínimo entre partidos del mismo día: **2h30min** (antes 3h). Máximo normal: **4 partidos/día** (puede subir en "modo recuperación").
+- **Línea principal: 3.5 goles** (antes 2.5). Se sigue rastreando 1.5, 2.5, 3.5 y 4.5, pero la decisión OVER/UNDER y el `acierto` del historial se calculan contra 3.5.
+- **BTTS eliminado por completo**: no se pide a la API, no se calcula, no se guarda. Motivo (con datos reales de 39 partidos): los partidos donde BTTS se movía fuerte promediaron MENOS goles que los que casi no se movían — lo contrario de lo esperado. No aportaba señal.
+- **4 puntos de chequeo por partido**: 24h, 6h, 1h y 5 minutos antes del inicio. Cada uno pide solo `alternate_totals` (1 mercado, 1 región) = **1 crédito por chequeo → 4 créditos por partido** (la mitad que antes, al sacar BTTS).
+- **Tendencia sostenida**: se exige que la probabilidad implícita se haya movido en la misma dirección en los 3 intervalos (24h→6h→1h→5m), sin reversiones. Un salto grande pero errático NO dispara alerta.
+- **La alerta OVER o UNDER (línea 3.5) se manda cuando el movimiento sostenido es ≥3 puntos porcentuales.** Cada alerta sale marcada **🧪 EXPERIMENTAL**: con los primeros 39 partidos reales, el movimiento de cuotas (a cualquier línea probada: 1.5, 2.5 o 3.5) no superó a simplemente usar la tasa base de esa línea — todavía no hay evidencia de que esta señal prediga mejor que el azar. Si no hay señal, el resultado es `⚠️ SIN APUESTA (Mercado Incierto)`. No hay niveles de confianza.
+- **Cuotas siempre registradas** (línea principal): apertura (24h) y cierre (5m) de Over y Under, en TODOS los partidos analizados, haya alerta o no.
+- **Movimiento de las 4 líneas, siempre registrado** (`mov15Over`, `mov25Over`, `mov35Over`, `mov45Over` y sus versiones Under + "sostenida" de cada una): se guarda el análisis completo de 1.5, 2.5, 3.5 y 4.5 en cada partido, no solo el de la línea principal — para poder comparar después cuál hubiera rendido mejor.
+- **Elección forzada (`direccionForzada` / `aciertoForzado` / `senalPonderada`)**: sigue siendo sobre la línea 3.5, pero ahora el cálculo combina las 4 líneas, no solo la principal. Se pondera el movimiento de cada línea según qué tan "pareja" (cerca de 50/50) estaba su cuota de apertura — una línea que ya abría muy decidida pesa menos. La suma ponderada (`senalPonderada`) decide OVER o UNDER. No es una sugerencia de apuesta, es un registro aparte para comparar contra `prediccion`.
+- **Sin tope de partidos por día.** El único límite es mensual: máximo 120 partidos seleccionados por mes (120 × 4 créditos = 480 de los 500 gratis). El contador cuenta los partidos *seleccionados*, hayas contestado el marcador o no, porque todos gastan créditos. Al llegar a 120 el bot deja de programar partidos hasta el mes siguiente. Ya no existe el "modo recuperación".
+- **Selección de partidos**: mismas 13 ligas. Solo se consideran partidos que **inicien entre las 6:00 y las 23:00 hora de Perú**. Dentro de un mismo día se encadenan todos los que haya con al menos 2h30 de diferencia entre uno y el siguiente.
+- **Búsqueda diaria a las 5:00 AM (hora de Perú)**: se adelantó desde las 8:00 para que los partidos de 6:00 a 8:00 AM del día siguiente queden a 24h o más y puedan seguirse desde el chequeo de 24h. Se puede cambiar con la variable `HORA_BUSQUEDA_DIARIA`.
 
 ## Qué pasa con la tabla "en curso" de la web
 
