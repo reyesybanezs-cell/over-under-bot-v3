@@ -48,7 +48,7 @@ const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEA_PRINCIPAL = '3.5'; // cambiado de 2.5 a 3.5
 const UMBRAL_MOVIMIENTO = 3; // puntos porcentuales de probabilidad implícita
 
-const GAP_MINIMO_MS = (2 * 60 + 5) * 60 * 1000; // 2h05min entre partidos del mismo día
+const GAP_MINIMO_MS = (1 * 60 + 55) * 60 * 1000; // 1h55min entre partidos del mismo día
 // Solo se consideran partidos que INICIEN entre las 6:00 y las 23:00 hora
 // local (ZONA_HORARIA). Ya no hay tope de partidos por día: el límite es
 // mensual (OBJETIVO_MENSUAL), para no pasarse de los créditos de la API.
