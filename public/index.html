@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Rastreador Over/Under</title>
+<title>Rastreador Over/Under 3.5</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg: #0B1210;
@@ -29,150 +29,70 @@
     justify-content:center;
     padding: 32px 16px 60px;
   }
-  main{ width:100%; max-width: 460px; }
-  .marca{
-    display:flex; align-items:baseline; gap:10px; margin-bottom: 6px;
-  }
+  main{ width:100%; max-width: 500px; }
+  .marca{ display:flex; align-items:baseline; gap:10px; margin-bottom: 6px; }
   .marca .bola{ font-size: 22px; }
-  h1{
-    font-size: 21px;
-    font-weight: 700;
-    margin: 0;
-    letter-spacing: -0.01em;
-  }
-  p.sub{
-    color: var(--muted);
-    font-size: 14px;
-    margin: 2px 0 28px;
-    line-height:1.5;
-  }
+  h1{ font-size: 21px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  p.sub{ color: var(--muted); font-size: 14px; margin: 2px 0 28px; line-height:1.5; }
+  
   button#buscar{
-    width:100%;
-    padding: 16px 20px;
-    border-radius: 12px;
-    border: 1px solid var(--over);
-    background: linear-gradient(180deg, #37B872, #2C9A60);
-    color: #06170F;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    font-size: 15px;
-    cursor:pointer;
-    transition: transform .12s ease, filter .12s ease;
+    width:100%; padding: 16px 20px; border-radius: 12px; border: 1px solid var(--over);
+    background: linear-gradient(180deg, #37B872, #2C9A60); color: #06170F;
+    font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px;
+    cursor:pointer; transition: transform .12s ease, filter .12s ease;
   }
   button#buscar:hover{ filter: brightness(1.06); }
   button#buscar:active{ transform: scale(0.98); }
-  button#buscar:disabled{
-    background: var(--surface-2);
-    border-color: var(--line);
-    color: var(--muted);
-    cursor: default;
-  }
-  #estadoTexto{
-    margin: 14px 2px 0;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 12.5px;
-    color: var(--muted);
-    min-height: 18px;
-    line-height:1.5;
-  }
-  .stats{
-    display:flex;
-    gap:10px;
-    margin-bottom: 22px;
-  }
-  .stats .stat{
-    flex:1;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 12px 10px;
-    text-align:center;
-  }
-  .stats .stat .valor{
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    font-size: 19px;
-  }
-  .stats .stat .etiqueta{
-    font-size: 10px;
-    color: var(--muted);
-    margin-top: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
+  button#buscar:disabled{ background: var(--surface-2); border-color: var(--line); color: var(--muted); cursor: default; }
+  
+  #estadoTexto{ margin: 14px 2px 0; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--muted); min-height: 18px; line-height:1.5; }
+  
+  .stats{ display:flex; gap:10px; margin-bottom: 22px; }
+  .stats .stat{ flex:1; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 10px; text-align:center; }
+  .stats .stat .valor{ font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 19px; }
+  .stats .stat .etiqueta{ font-size: 10px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
   .stats .stat.racha-positiva .valor{ color: var(--over); }
   .stats .stat.racha-negativa .valor{ color: var(--warn); }
+  
   .tarjetas{ margin-top: 26px; display:flex; flex-direction:column; gap:14px; }
-  .vacio{
-    border: 1px dashed var(--line);
-    border-radius: 12px;
-    padding: 22px 18px;
-    color: var(--muted);
-    font-size: 13.5px;
-    line-height:1.6;
-  }
-  .partido{
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 18px 18px 16px;
-  }
-  .partido .etiqueta{
-    color: var(--muted);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    margin-bottom: 6px;
-  }
-  .partido h2{
-    font-size: 16.5px;
-    margin: 0 0 4px;
-    font-weight: 700;
-  }
-  .partido .fecha{
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 12px;
-    color: var(--muted);
-    margin-bottom: 14px;
-  }
-  .tabla-scroll{
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  table.cuotas{
-    width:100%;
-    min-width: 480px;
-    border-collapse: collapse;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 10px;
-  }
-  table.cuotas th{
-    text-align:left;
-    color: var(--muted);
-    font-weight: 400;
-    padding: 4px 6px 8px 0;
-    border-bottom: 1px solid var(--line);
-  }
-  table.cuotas td{
-    padding: 7px 6px 7px 0;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-  }
+  .vacio{ border: 1px dashed var(--line); border-radius: 12px; padding: 22px 18px; color: var(--muted); font-size: 13.5px; line-height:1.6; }
+  
+  .partido{ background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 18px 16px; }
+  .partido .etiqueta{ color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; margin-bottom: 6px; }
+  .partido h2{ font-size: 16.5px; margin: 0 0 4px; font-weight: 700; }
+  .partido .fecha{ font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  
+  .tabla-scroll{ overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 12px; padding-bottom: 6px; }
+  table.cuotas{ width:100%; min-width: 480px; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+  table.cuotas th{ text-align:left; color: var(--muted); font-weight: 400; padding: 4px 6px 8px 0; border-bottom: 1px solid var(--line); }
+  table.cuotas td{ padding: 7px 6px 7px 0; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
   table.cuotas tr:last-child td{ border-bottom: none; }
-  .over-val{ color: var(--over); }
-  .under-val{ color: var(--under); }
+  
+  .over-val{ color: var(--over); font-weight: 500;}
+  .under-val{ color: var(--under); font-weight: 500;}
   .pendiente{ color: var(--muted); }
+  .pinnacle-row{ display: block; font-size: 9px; color: #8F8CFF; margin-top: 2px; }
+  .metricas-row{ display: block; font-size: 9px; color: var(--muted); margin-top: 2px; }
+
+  .prediccion-badge{
+    padding: 10px 14px; border-radius: 8px; font-size: 13px; text-align: center;
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; background: var(--surface-2); border: 1px solid var(--line);
+  }
+  .prediccion-badge.OVER{ border-color: var(--over); color: var(--over); }
+  .prediccion-badge.UNDER{ border-color: var(--under); color: var(--under); }
+  .prediccion-badge.SIN_APUESTA{ border-color: var(--warn); color: var(--warn); }
 </style>
 </head>
 <body>
 <main>
   <div class="marca">
     <span class="bola">⚽</span>
-    <h1>Rastreador Over/Under</h1>
+    <h1>Rastreador Veredicto 3.5</h1>
   </div>
-  <p class="sub">Selecciona los partidos del día (entre las 6:00 y las 23:00, hora de Perú), sigue el movimiento de sus cuotas de goles y recibe la alerta directo en Telegram.</p>
+  <p class="sub">Evalúa Goles Esperados (xG), rastrea precios de Pinnacle y determina una predicción oficial sobre la línea 3.5 basada en movimiento de mercado.</p>
 
   <div class="stats" id="stats">
-    <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% aciertos</div></div>
+    <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% winrate</div></div>
     <div class="stat"><div class="valor" id="statTotal">—</div><div class="etiqueta">analizados</div></div>
     <div class="stat" id="statRachaBox"><div class="valor" id="statRacha">—</div><div class="etiqueta">racha</div></div>
   </div>
@@ -202,51 +122,88 @@ const CHECKPOINTS = [
 ];
 
 const LINEAS = ['1.5', '2.5', '3.5', '4.5'];
+const LINEAS_XG = ['0.5', '1.5', '2.5', '3.5', '4.5', '5.5'];
 
 async function refrescarEstadisticas(){
   try{
     const res = await fetch('/api/estadisticas');
     const s = await res.json();
-    statAciertos.textContent = s.porcentajeAciertos !== null ? `${s.porcentajeAciertos}%` : '—';
-    statTotal.textContent = s.totalAnalizados ?? '—';
+    statAciertos.textContent = s.winrate !== undefined && s.winrate !== null ? `${s.winrate}%` : '—';
+    statTotal.textContent = s.resueltos ?? '—';
     statRachaBox.classList.remove('racha-positiva', 'racha-negativa');
-    if (s.racha > 0 && s.tipoRacha === 'acierto'){
-      statRacha.textContent = `+${s.racha}`;
+    if (s.rachaActual > 0){
+      statRacha.textContent = `+${s.rachaActual}`;
       statRachaBox.classList.add('racha-positiva');
-    } else if (s.racha > 0 && s.tipoRacha === 'fallo'){
-      statRacha.textContent = `-${s.racha}`;
+    } else if (s.rachaActual < 0){
+      statRacha.textContent = `${s.rachaActual}`;
       statRachaBox.classList.add('racha-negativa');
     } else {
       statRacha.textContent = '—';
     }
-  }catch(err){
-    console.error('No se pudieron cargar las estadísticas:', err);
-  }
+  }catch(err){ console.error(err); }
 }
 
-function formatearFecha(iso){
-  return new Date(iso).toLocaleString('es-ES', { dateStyle:'medium', timeStyle:'short' });
-}
+function formatearFecha(iso){ return new Date(iso).toLocaleString('es-ES', { dateStyle:'medium', timeStyle:'short' }); }
 
 function celda(dato){
   if (!dato) return '<span class="pendiente">—</span>';
-  return `<span class="over-val">${dato.over}</span>/<span class="under-val">${dato.under}</span>`;
+  return `<span class="over-val">${dato.over}</span> / <span class="under-val">${dato.under}</span>`;
 }
 
-const MESES_CORTO = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+// Calculadora de Goles Esperados (xG) en el frontend
+function calcularXG(lineas) {
+  if (!lineas) return '—';
+  let xg = 0;
+  for (const n of LINEAS_XG) {
+    if (lineas[n] && lineas[n].over && lineas[n].under) {
+      const pOver = 1 / lineas[n].over;
+      const pUnder = 1 / lineas[n].under;
+      xg += pOver / (pOver + pUnder);
+    }
+  }
+  return xg > 0 ? xg.toFixed(2) : '—';
+}
+
+const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 function formatearDiaCorto(diaLocal){
   const [, mes, dia] = diaLocal.split('-').map(Number);
-  return `${dia} ${MESES_CORTO[mes - 1]}`;
+  return `${dia} ${MESES[mes - 1]}`;
 }
 
 function renderPartido(partido){
   const etiqueta = `Partido ${partido.etiqueta} · ${formatearDiaCorto(partido.diaLocal)}`;
+  
   const filas = CHECKPOINTS.map(cp => {
     const chequeo = partido.cuotas && partido.cuotas[cp.clave];
     const lineas = chequeo && chequeo.lineas;
-    const celdas = LINEAS.map(l => `<td>${celda(lineas && lineas[l])}</td>`).join('');
-    return `<tr><td>${cp.etiqueta}</td>${celdas}</tr>`;
+    const xg = calcularXG(lineas);
+    const casas = chequeo && chequeo.casas35 ? chequeo.casas35 : '—';
+
+    const celdas = LINEAS.map(l => {
+      let contenido = celda(lineas && lineas[l]);
+      // Agregar Pinnacle si es la línea 3.5
+      if (l === '3.5' && chequeo && chequeo.pinnacle35 && chequeo.pinnacle35.over) {
+        contenido += `<br><span class="pinnacle-row">PIN: ${chequeo.pinnacle35.over}/${chequeo.pinnacle35.under}</span>`;
+      }
+      return `<td>${contenido}</td>`;
+    }).join('');
+
+    return `
+      <tr>
+        <td>
+          ${cp.etiqueta}
+          <br><span class="metricas-row">xG: ${xg} | Casas: ${casas}</span>
+        </td>
+        ${celdas}
+      </tr>`;
   }).join('');
+
+  let badgeHtml = '';
+  if (partido.prediccionEnviada) {
+    const p = partido.prediccion || 'SIN_APUESTA';
+    const senalText = partido.senalPonderada !== undefined ? ` (Señal: ${partido.senalPonderada})` : '';
+    badgeHtml = `<div class="prediccion-badge ${p}">VEREDICTO: ${p} 3.5${senalText}</div>`;
+  }
 
   return `
     <div class="partido">
@@ -255,10 +212,11 @@ function renderPartido(partido){
       <div class="fecha">${formatearFecha(partido.commenceTime)}</div>
       <div class="tabla-scroll">
         <table class="cuotas">
-          <thead><tr><th>Chequeo</th><th>1.5 (O/U)</th><th>2.5 (O/U)</th><th>3.5 (O/U)</th><th>4.5 (O/U)</th></tr></thead>
+          <thead><tr><th>Info</th><th>1.5</th><th>2.5</th><th>3.5</th><th>4.5</th></tr></thead>
           <tbody>${filas}</tbody>
         </table>
       </div>
+      ${badgeHtml}
     </div>
   `;
 }
@@ -268,15 +226,12 @@ async function refrescarEstado(){
     const res = await fetch('/api/estado');
     const data = await res.json();
     const partidos = data.partidos || [];
-
     if (partidos.length === 0){
       tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día.</div>';
       return;
     }
     tarjetas.innerHTML = partidos.map(p => renderPartido(p)).join('');
-  }catch(err){
-    console.error('No se pudo obtener el estado:', err);
-  }
+  }catch(err){}
 }
 
 boton.addEventListener('click', async () => {
@@ -289,7 +244,7 @@ boton.addEventListener('click', async () => {
     estadoTexto.textContent = data.mensaje || (data.ok ? 'Listo.' : 'Ocurrió un error.');
     await refrescarEstado();
   }catch(err){
-    estadoTexto.textContent = 'Error de conexión con el servidor.';
+    estadoTexto.textContent = 'Error de conexión.';
   }finally{
     boton.disabled = false;
     boton.textContent = 'Buscar Partidos y Programar';
