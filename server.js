@@ -261,8 +261,6 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
 }
 
 // Cálculo matemático de xG basado en la suma de probabilidades acumuladas.
-// E[X] = P(X>0) + P(X>1) + P(X>2) + ...
-// P(X>k) es la probabilidad "Over k.5"
 function calcularXG(lineas) {
   if (!lineas) return '';
   let xg = 0;
@@ -319,12 +317,11 @@ async function buscarYProgramarPartidos() {
   return conBloqueoDB(async () => {
     const db = leerDB();
     
-    // 48h Timeout Cleanup
     for (const id in db.partidos) {
       const p = db.partidos[id];
       const horas = (Date.now() - new Date(p.commenceTime).getTime()) / 3600000;
       if (p.prediccionEnviada && horas > 48) {
-        await cerrarPartidoEnHistorial(p, ""); // Marcador vacío
+        await cerrarPartidoEnHistorial(p, ""); 
         delete db.partidos[id];
       }
     }
@@ -392,7 +389,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
   }
 
   if (datos) {
-    // 1. Enviar Logs de Chequeo y Crudos a Sheets
     enviarASheets({
       tipo: 'chequeo',
       fechaCaptura: new Date().toISOString(),
@@ -405,7 +401,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
       enviarASheets({ tipo: 'crudo', filasCrudas: datos.filasCrudas }).catch(()=>{});
     }
 
-    // 2. Guardar estado local
     await conBloqueoDB(() => {
       const db = leerDB();
       if (!db.partidos[matchId]) return;
@@ -446,10 +441,9 @@ async function ejecutarPrediccion(matchId) {
     const datosMinimos = clavesDisp.includes('24h') && clavesDisp.includes('5m');
     
     let mensaje = '';
-    let prediccion = 'SIN_APUESTA'; // Fallback
+    let prediccion = 'SIN_APUESTA';
 
     if (datosMinimos) {
-      // Registrar Datos de Apertura y Cierre
       const ap = p.cuotas['24h'];
       const ci = p.cuotas['5m'];
       
@@ -487,8 +481,6 @@ async function ejecutarPrediccion(matchId) {
       }
       p.senalPonderada = sumaPesos > 0 ? Number((senalPonderada / sumaPesos).toFixed(2)) : 0;
 
-      // REGLA DE DECISIÓN ÚNICA CONTRA EL 3.5
-      // Prioriza el UNDER (tasa base alta) salvo confirmación alcista fuerte.
       const impulsoAlcistaFuerte = (p.mov35Over > 1.5) && p.sost35Over && (p.senalPonderada > 1.0);
       prediccion = impulsoAlcistaFuerte ? 'OVER' : 'UNDER';
       p.prediccion = prediccion;
@@ -643,7 +635,6 @@ app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo puerto ${PORT}`);
   await recuperarEstadoSiHaceFalta();
   
-  // Restaurar cron jobs
   const db = leerDB();
   Object.entries(db.partidos).forEach(([id, p]) => {
     if (!p.prediccionEnviada) programarChequeos(id, p);
@@ -660,4 +651,3 @@ app.listen(PORT, async () => {
   
   configurarWebhookTelegram();
 });
-```eof
