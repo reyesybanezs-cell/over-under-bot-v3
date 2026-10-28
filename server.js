@@ -19,7 +19,6 @@ const GOOGLE_SHEETS_SECRETO = process.env.GOOGLE_SHEETS_SECRETO || 'cambia-este-
 
 const DB_PATH = path.join(__dirname, 'database.json');
 
-// Ligas permitidas
 const LIGAS_PERMITIDAS = [
   'soccer_epl', 'soccer_efl_champ', 'soccer_germany_bundesliga', 'soccer_spain_la_liga',
   'soccer_italy_serie_a', 'soccer_france_ligue_one', 'soccer_netherlands_eredivisie',
@@ -28,44 +27,44 @@ const LIGAS_PERMITIDAS = [
 ];
 
 const CHECKPOINTS = [
-  { clave: '24h', ms: 24 * 60 * 60 * 1000 },
-  { clave: '6h', ms: 6 * 60 * 60 * 1000 },
-  { clave: '1h', ms: 1 * 60 * 60 * 1000 },
-  { clave: '5m', ms: 5 * 60 * 1000 },
+  { clave: '24h', ms: 24 * 3600000 },
+  { clave: '6h', ms: 6 * 3600000 },
+  { clave: '1h', ms: 1 * 3600000 },
+  { clave: '5m', ms: 5 * 60000 },
 ];
 
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
-const LINEAS_XG = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]; // Para calcular goles esperados
+const LINEAS_XG = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5];
 const LINEA_PRINCIPAL = '3.5';
 const VERSION_REGLA = 'v3.5';
+const UMBRAL_ABORTO_CUOTA = 2.50; // Filtro de peaje a las 24h
 
-const GAP_MINIMO_MS = (1 * 60 + 55) * 60 * 1000; // 1h55min
+const GAP_MINIMO_MS = (1 * 60 + 55) * 60000;
 const VENTANA_INICIO_MIN = 6 * 60;
 const VENTANA_FIN_MIN = 23 * 60;
-const OBJETIVO_MENSUAL = 120; // Tope para proteger API
+const OBJETIVO_MENSUAL_ACTIVOS = 120; // 120 partidos ACTIVOS que consumen 4 créditos
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
 const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
 
-let trabajosActivos = [];
+let trabajosActivos = {};
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================================================================
-// BASE DE DATOS Y ESTADO (Tolerancia a fallos)
+// BASE DE DATOS Y ESTADO
 // ==================================================================
 
 function leerDB() {
-  if (!fs.existsSync(DB_PATH)) return { partidos: {} };
+  if (!fs.existsSync(DB_PATH)) return { partidos: {}, calendarioDia: [] };
   try {
-    const contenido = fs.readFileSync(DB_PATH, 'utf-8');
-    const data = JSON.parse(contenido || '{}');
+    const data = JSON.parse(fs.readFileSync(DB_PATH, 'utf-8') || '{}');
     if (!data.partidos) data.partidos = {};
+    if (!data.calendarioDia) data.calendarioDia = [];
     return data;
   } catch (err) {
-    console.error('Error leyendo database.json:', err.message);
-    return { partidos: {} };
+    return { partidos: {}, calendarioDia: [] };
   }
 }
 
@@ -82,7 +81,7 @@ function conBloqueoDB(tarea) {
 }
 
 // ==================================================================
-// COMUNICACIÓN CON GOOGLE SHEETS (La nueva API)
+// COMUNICACIÓN EXTERNA (Sheets y Telegram)
 // ==================================================================
 
 async function enviarASheets(payload) {
@@ -93,41 +92,27 @@ async function enviarASheets(payload) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secreto: GOOGLE_SHEETS_SECRETO, ...payload }),
     });
-    if (!res.ok) return false;
     const data = await res.json();
     return data.ok;
   } catch (err) {
-    console.error(`Error de red enviando a Sheets (${payload.tipo || 'historial'}):`, err.message);
     return false;
   }
 }
 
 async function recuperarEstadoSiHaceFalta() {
   const dbLocal = leerDB();
-  if (Object.keys(dbLocal.partidos).length > 0) return;
-  if (!GOOGLE_SHEETS_WEBHOOK_URL) return;
-
-  console.log('🔄 Buscando copia de estado en curso en Sheets...');
+  if (Object.keys(dbLocal.partidos).length > 0 || !GOOGLE_SHEETS_WEBHOOK_URL) return;
   try {
     const res = await fetch(`${GOOGLE_SHEETS_WEBHOOK_URL}?secreto=${encodeURIComponent(GOOGLE_SHEETS_SECRETO)}&tipo=estado`);
-    if (!res.ok) return;
     const data = await res.json();
     if (data.ok && data.estado) {
       const parseado = JSON.parse(data.estado);
-      if (!parseado.partidos) parseado.partidos = {};
-      if (Object.keys(parseado.partidos).length > 0) {
+      if (parseado.partidos && Object.keys(parseado.partidos).length > 0) {
         fs.writeFileSync(DB_PATH, JSON.stringify(parseado, null, 2), 'utf-8');
-        console.log(`✅ Recuperados ${Object.keys(parseado.partidos).length} partido(s) en curso.`);
       }
     }
-  } catch (err) {
-    console.error('No se pudo recuperar el estado:', err.message);
-  }
+  } catch (err) {}
 }
-
-// ==================================================================
-// TELEGRAM
-// ==================================================================
 
 async function enviarTelegram(mensaje) {
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) return null;
@@ -148,16 +133,11 @@ async function configurarWebhookTelegram() {
   if (!TELEGRAM_TOKEN) return;
   const urlPublica = process.env.RENDER_EXTERNAL_URL;
   if (!urlPublica) return;
-  const urlWebhook = `${urlPublica}/api/telegram-webhook/${TELEGRAM_WEBHOOK_SECRET}`;
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: urlWebhook }),
-    });
-    const data = await res.json();
-    if (data.ok) console.log(`✅ Webhook Telegram configurado.`);
-  } catch (err) {}
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: `${urlPublica}/api/telegram-webhook/${TELEGRAM_WEBHOOK_SECRET}` }),
+  });
 }
 
 // ==================================================================
@@ -165,9 +145,8 @@ async function configurarWebhookTelegram() {
 // ==================================================================
 
 async function obtenerEventosLiga(sportKey) {
-  const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/events?apiKey=${ODDS_API_KEY}`;
   try {
-    const res = await fetch(url);
+    const res = await fetch(`https://api.the-odds-api.com/v4/sports/${sportKey}/events?apiKey=${ODDS_API_KEY}`);
     if (!res.ok) return [];
     const eventos = await res.json();
     return eventos.map((e) => ({ ...e, sportKey }));
@@ -181,7 +160,6 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
   try {
     const res = await fetch(url);
     const creditosRestantes = res.headers.get('x-requests-remaining') || '';
-    
     if (!res.ok) return null;
     const data = await res.json();
 
@@ -197,7 +175,7 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
     }
 
     for (const casa of data.bookmakers || []) {
-      const mercadoTotals = casa.markets.find((m) => m.key === 'alternate_totals');
+      const mercadoTotals = casa.markets?.find((m) => m.key === 'alternate_totals');
       if (!mercadoTotals) continue;
       
       const updateTime = casa.last_update;
@@ -206,17 +184,13 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
         const clave = String(outcome.point);
         const esOver = outcome.name === 'Over';
         
-        // Recolección para promedio (solo si es línea rastreada/xG)
         if (acumuladorPromedios[clave]) {
           if (esOver) acumuladorPromedios[clave].overs.push(outcome.price);
           else acumuladorPromedios[clave].unders.push(outcome.price);
         }
 
-        // Datos crudos y específicos
         if (LINEAS_A_RASTREAR.includes(outcome.point) || LINEAS_XG.includes(outcome.point)) {
-          // Buscamos a la pareja (el under del over, o viceversa) para armar la fila cruda
           const outcomePareja = mercadoTotals.outcomes.find(o => o.point === outcome.point && o.name !== outcome.name);
-          
           if (esOver && outcomePareja) {
              filasCrudas.push({
                fechaCaptura, partidoId: eventId, chequeo: claveCheckpoint,
@@ -224,7 +198,6 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
                cuotaUnder: outcomePareja.price, ultimaActualizacion: updateTime
              });
 
-             // Captura de Pinnacle y métricas de la línea principal (3.5)
              if (clave === LINEA_PRINCIPAL) {
                casasEn35.add(casa.title);
                if (casa.title.toLowerCase() === 'pinnacle') {
@@ -246,51 +219,43 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
       }
     }
 
-    return { 
-      lineas: lineasPromedio, 
-      filasCrudas, 
-      creditosRestantes, 
-      pinnacle35, 
-      cantidadCasas: casasEn35.size,
-      horaInicioApi 
-    };
-
+    return { lineas: lineasPromedio, filasCrudas, creditosRestantes, pinnacle35, cantidadCasas: casasEn35.size, horaInicioApi };
   } catch (err) {
     return null;
   }
 }
 
-// Cálculo matemático de xG basado en la suma de probabilidades acumuladas.
 function calcularXG(lineas) {
   if (!lineas) return '';
   let xg = 0;
   for (const n of LINEAS_XG) {
     const key = String(n);
-    if (lineas[key] && lineas[key].over && lineas[key].under) {
+    if (lineas[key]?.over && lineas[key]?.under) {
       const pOverImpl = 1 / lineas[key].over;
       const pUnderImpl = 1 / lineas[key].under;
-      const fairProbOver = pOverImpl / (pOverImpl + pUnderImpl);
-      xg += fairProbOver;
+      xg += pOverImpl / (pOverImpl + pUnderImpl);
     }
   }
   return xg > 0 ? Number(xg.toFixed(2)) : '';
 }
 
 // ==================================================================
-// SELECCIÓN Y PROGRAMACIÓN
+// SELECCIÓN Y GESTIÓN DE COLA (BACKLOG)
 // ==================================================================
 
 function crearRegistroPartido(evento, diaLocal, etiqueta) {
   return {
     id: evento.id, sportKey: evento.sportKey, homeTeam: evento.home_team, awayTeam: evento.away_team,
     commenceTime: evento.commence_time, diaLocal, etiqueta, cuotas: {},
+    estado: 'en_cola', // Estados: 'en_cola', 'activo', 'abortado', 'cerrado'
     prediccionEnviada: false, prediccion: null, mensajeMarcadorId: null
   };
 }
 
 function enVentanaHoraria(fechaIso) {
-  const min = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: ZONA_HORARIA, hour: '2-digit', hourCycle: 'h23' }).format(new Date(fechaIso))) * 60 
-            + parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: ZONA_HORARIA, minute: '2-digit' }).format(new Date(fechaIso)));
+  const formatter = new Intl.DateTimeFormat('en-GB', { timeZone: ZONA_HORARIA, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const parts = formatter.formatToParts(new Date(fechaIso));
+  const min = parseInt(parts.find(p => p.type === 'hour').value) * 60 + parseInt(parts.find(p => p.type === 'minute').value);
   return min >= VENTANA_INICIO_MIN && min <= VENTANA_FIN_MIN;
 }
 
@@ -317,69 +282,91 @@ async function buscarYProgramarPartidos() {
   return conBloqueoDB(async () => {
     const db = leerDB();
     
+    // Limpieza de partidos viejos de más de 48h
     for (const id in db.partidos) {
       const p = db.partidos[id];
       const horas = (Date.now() - new Date(p.commenceTime).getTime()) / 3600000;
-      if (p.prediccionEnviada && horas > 48) {
+      if (p.estado === 'activo' && p.prediccionEnviada && horas > 48) {
         await cerrarPartidoEnHistorial(p, ""); 
+        p.estado = 'cerrado';
         delete db.partidos[id];
       }
     }
 
-    if (Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado && !p.prediccionEnviada)) {
-      return { bloqueado: true, mensaje: `Ya hay partidos programados para el ${diaSeleccionado}.` };
+    if (Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado && p.estado !== 'cerrado' && p.estado !== 'abortado')) {
+      return { bloqueado: true, mensaje: `Ya hay partidos en gestión para el ${diaSeleccionado}.` };
     }
 
     const mesActual = obtenerDiaLocal(new Date().toISOString()).slice(0, 7);
-    if (!db.contadorMes || db.contadorMes.mes !== mesActual) db.contadorMes = { mes: mesActual, seleccionados: 0 };
-    const restantes = OBJETIVO_MENSUAL - db.contadorMes.seleccionados;
-    if (restantes <= 0) return { bloqueado: true, mensaje: `Límite mensual de ${OBJETIVO_MENSUAL} alcanzado.` };
+    if (!db.contadorMes || db.contadorMes.mes !== mesActual) db.contadorMes = { mes: mesActual, activos: 0 };
+    if (db.contadorMes.activos >= OBJETIVO_MENSUAL_ACTIVOS) return { bloqueado: true, mensaje: `Límite de ${OBJETIVO_MENSUAL_ACTIVOS} partidos ACTIVOS alcanzado.` };
 
     const eventosDelDia = todosLosEventos.filter(e => obtenerDiaLocal(e.commence_time) === diaSeleccionado && new Date(e.commence_time).getTime() >= new Date(anclaDelDia.commence_time).getTime());
     
+    // Guardamos todo el calendario válido del día para usarlo de "Caja de Repuestos"
+    db.calendarioDia = eventosDelDia;
+    
+    // Seleccionamos la ruta inicial
     const seleccionados = [anclaDelDia];
     let ultimoTiempo = new Date(anclaDelDia.commence_time).getTime();
     for (const ev of eventosDelDia) {
-      if (seleccionados.length >= restantes) break;
       if (ev.id === anclaDelDia.id) continue;
       const t = new Date(ev.commence_time).getTime();
       if (t - ultimoTiempo >= GAP_MINIMO_MS) { seleccionados.push(ev); ultimoTiempo = t; }
     }
 
     seleccionados.forEach((ev, i) => {
-      const p = crearRegistroPartido(ev, diaSeleccionado, i < 26 ? String.fromCharCode(65 + i) : `P${i + 1}`);
+      const p = crearRegistroPartido(ev, diaSeleccionado, `P${i + 1}`);
       db.partidos[ev.id] = p;
-      programarChequeos(ev.id, p);
+      programarChequeoPeaje(ev.id, p);
     });
-    db.contadorMes.seleccionados += seleccionados.length;
+    
     guardarDB(db);
-
-    const txt = seleccionados.map(e => `▫️ ${e.home_team} vs ${e.away_team}`).join('\n');
-    await enviarTelegram(`✅ ${seleccionados.length} partido(s) programado(s):\n\n${txt}`);
-    return { ok: true, mensaje: `${seleccionados.length} programados.` };
+    await enviarTelegram(`✅ ${seleccionados.length} partido(s) puestos EN COLA para peaje de 24h.`);
+    return { ok: true, mensaje: `${seleccionados.length} en cola.` };
   });
 }
 
-function programarChequeos(matchId, partido) {
+function programarChequeoPeaje(matchId, partido) {
   const tiempoInicio = new Date(partido.commenceTime).getTime();
-  for (const cp of CHECKPOINTS) {
-    if (partido.cuotas && partido.cuotas[cp.clave]) continue;
-    const ejecucion = new Date(tiempoInicio - cp.ms);
-    
-    if (ejecucion.getTime() <= Date.now()) {
-      if (tiempoInicio > Date.now()) {
-        console.log(`⏰ Checkpoint ${cp.clave} atrasado, ejecutando ahora.`);
-        ejecutarChequeo(matchId, cp.clave, true);
-      }
-      continue;
-    }
-    trabajosActivos.push(schedule.scheduleJob(ejecucion, () => ejecutarChequeo(matchId, cp.clave, false)));
+  const ejecucion24h = new Date(tiempoInicio - CHECKPOINTS[0].ms);
+  
+  if (ejecucion24h.getTime() <= Date.now() && tiempoInicio > Date.now()) {
+    ejecutarChequeo(matchId, '24h', true);
+  } else {
+    trabajosActivos[`${matchId}_24h`] = schedule.scheduleJob(ejecucion24h, () => ejecutarChequeo(matchId, '24h', false));
   }
 }
 
+async function buscarReemplazo(diaLocal, tiempoLibreMs, db) {
+  // Busca un partido en el calendarioDia que empiece después del tiempoLibre,
+  // que respete el GAP con otros partidos ACTIVOS o EN COLA, y que esté a >24h
+  const candidatos = db.calendarioDia || [];
+  
+  const partidosVivos = Object.values(db.partidos).filter(p => p.estado === 'activo' || p.estado === 'en_cola');
+  
+  for (const ev of candidatos) {
+    if (db.partidos[ev.id]) continue; // Ya fue evaluado o está en curso
+    const t = new Date(ev.commence_time).getTime();
+    if (t < tiempoLibreMs) continue;
+    if (t - Date.now() < 24 * 3600000) continue; // Ya pasó su ventana de 24h
+    
+    // Chequear solapamiento con los vivos
+    const solapa = partidosVivos.some(pv => Math.abs(t - new Date(pv.commenceTime).getTime()) < GAP_MINIMO_MS);
+    if (!solapa) {
+      return ev;
+    }
+  }
+  return null;
+}
+
+// ==================================================================
+// EJECUCIÓN DE CHEQUEOS Y ABORTO TEMPRANO
+// ==================================================================
+
 async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
   const pInicial = leerDB().partidos[matchId];
-  if (!pInicial) return;
+  if (!pInicial || pInicial.estado === 'abortado' || pInicial.estado === 'cerrado') return;
 
   let datos = null;
   for (let i = 1; i <= 3; i++) {
@@ -390,8 +377,7 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
 
   if (datos) {
     enviarASheets({
-      tipo: 'chequeo',
-      fechaCaptura: new Date().toISOString(),
+      tipo: 'chequeo', fechaCaptura: new Date().toISOString(),
       partidoId: pInicial.id, partido: `${pInicial.homeTeam} vs ${pInicial.awayTeam}`,
       chequeo: cpClave, horaInicioApi: datos.horaInicioApi,
       creditosRestantes: datos.creditosRestantes, cantidadCasas: datos.cantidadCasas
@@ -401,26 +387,64 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
       enviarASheets({ tipo: 'crudo', filasCrudas: datos.filasCrudas }).catch(()=>{});
     }
 
-    await conBloqueoDB(() => {
+    await conBloqueoDB(async () => {
       const db = leerDB();
-      if (!db.partidos[matchId]) return;
-      db.partidos[matchId].cuotas[cpClave] = { 
-        lineas: datos.lineas, 
-        pinnacle35: datos.pinnacle35, 
-        casas35: datos.cantidadCasas, 
-        horaInicioReal: datos.horaInicioApi,
-        recuperadoTarde: recuperadoTarde
+      const p = db.partidos[matchId];
+      if (!p || p.estado === 'abortado') return;
+      
+      p.cuotas[cpClave] = { 
+        lineas: datos.lineas, pinnacle35: datos.pinnacle35, 
+        casas35: datos.cantidadCasas, horaInicioReal: datos.horaInicioApi,
+        recuperadoTarde
       };
+
+      // LÓGICA DE PEAJE EN 24H
+      if (cpClave === '24h') {
+        const cuotaAperturaOver = p.cuotas['24h'].lineas[LINEA_PRINCIPAL]?.over;
+        
+        if (cuotaAperturaOver && cuotaAperturaOver >= UMBRAL_ABORTO_CUOTA) {
+          // ABORTAR
+          p.estado = 'abortado';
+          await enviarTelegram(`🛑 Partido Descartado (Cuota 24h: ${cuotaAperturaOver}).\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
+          
+          // Buscar reemplazo inmediato
+          const tiempoHueco = new Date(p.commenceTime).getTime() - GAP_MINIMO_MS;
+          const nuevoEv = await buscarReemplazo(p.diaLocal, tiempoHueco, db);
+          
+          if (nuevoEv) {
+            const numActuales = Object.keys(db.partidos).length;
+            const nuevoP = crearRegistroPartido(nuevoEv, p.diaLocal, `R${numActuales}`);
+            db.partidos[nuevoEv.id] = nuevoP;
+            programarChequeoPeaje(nuevoEv.id, nuevoP);
+            await enviarTelegram(`✅ Reemplazo encontrado: ${nuevoP.homeTeam} vs ${nuevoP.awayTeam}`);
+          } else {
+            await enviarTelegram(`⚠️ No se encontraron más partidos que encajen en el calendario para cubrir el hueco.`);
+          }
+        } else {
+          // APROBADO: Pasa a ACTIVO y consume cuota del mes
+          p.estado = 'activo';
+          db.contadorMes.activos += 1;
+          
+          const cuotaTxt = cuotaAperturaOver ? cuotaAperturaOver : 'N/A';
+          await enviarTelegram(`🟢 Partido ACTIVO (Cuota 24h: ${cuotaTxt}). Monitorizando.\n⚽ ${p.homeTeam} vs ${p.awayTeam}`);
+          
+          // Programar los siguientes chequeos
+          const tiempoInicio = new Date(p.commenceTime).getTime();
+          ['6h', '1h', '5m'].forEach(cpFuturo => {
+            const msCp = CHECKPOINTS.find(c => c.clave === cpFuturo).ms;
+            const msEjec = tiempoInicio - msCp;
+            if (msEjec > Date.now()) {
+              trabajosActivos[`${matchId}_${cpFuturo}`] = schedule.scheduleJob(new Date(msEjec), () => ejecutarChequeo(matchId, cpFuturo, false));
+            }
+          });
+        }
+      }
       guardarDB(db);
     });
   }
 
-  if (cpClave === '5m') await ejecutarPrediccion(matchId);
+  if (cpClave === '5m' && pInicial.estado === 'activo') await ejecutarPrediccion(matchId);
 }
-
-// ==================================================================
-// ALGORITMO (DECISIÓN ÚNICA Y EVALUACIÓN 3.5)
-// ==================================================================
 
 function analizarSerie(valores) {
   const delta = valores[valores.length - 1] - valores[0];
@@ -435,12 +459,11 @@ async function ejecutarPrediccion(matchId) {
   return conBloqueoDB(async () => {
     const db = leerDB();
     const p = db.partidos[matchId];
-    if (!p) return;
+    if (!p || p.estado !== 'activo') return;
 
-    const clavesDisp = CHECKPOINTS.map(c => c.clave).filter(c => p.cuotas[c] && p.cuotas[c].lineas && p.cuotas[c].lineas[LINEA_PRINCIPAL]);
+    const clavesDisp = CHECKPOINTS.map(c => c.clave).filter(c => p.cuotas[c]?.lineas?.[LINEA_PRINCIPAL]);
     const datosMinimos = clavesDisp.includes('24h') && clavesDisp.includes('5m');
     
-    let mensaje = '';
     let prediccion = 'SIN_APUESTA';
 
     if (datosMinimos) {
@@ -485,21 +508,15 @@ async function ejecutarPrediccion(matchId) {
       prediccion = impulsoAlcistaFuerte ? 'OVER' : 'UNDER';
       p.prediccion = prediccion;
 
-      mensaje = `🎯 PREDICCIÓN OFICIAL: ${prediccion} 3.5 GOLES\n`+
-                `⚽ ${p.homeTeam} vs ${p.awayTeam}\n`+
-                `xG Apertura: ${p.xgApertura} | xG Cierre: ${p.xgCierre}\n`+
-                `Señal Ponderada: ${p.senalPonderada}`;
-    } else {
-      mensaje = `⚠️ SIN APUESTA (Datos insuficientes) en: ${p.homeTeam} vs ${p.awayTeam}`;
+      await enviarTelegram(`🎯 PREDICCIÓN: ${prediccion} 3.5 en ${p.homeTeam} vs ${p.awayTeam}`);
     }
 
-    await enviarTelegram(mensaje);
     p.prediccionEnviada = true;
     db.partidos[matchId] = p;
     guardarDB(db);
 
     const ts = new Date(new Date(p.commenceTime).getTime() + 3 * 3600000);
-    trabajosActivos.push(schedule.scheduleJob(ts, () => enviarSolicitudMarcador(matchId)));
+    trabajosActivos[`${matchId}_marcador`] = schedule.scheduleJob(ts, () => enviarSolicitudMarcador(matchId));
   });
 }
 
@@ -520,47 +537,27 @@ async function cerrarPartidoEnHistorial(p, marcador) {
     }
   }
 
-  const payload = {
-    fecha: new Date().toISOString(),
-    horaInicioReal: p.horaInicioReal || p.commenceTime,
-    liga: p.sportKey,
-    equipoLocal: p.homeTeam,
-    equipoVisitante: p.awayTeam,
-    partido: `${p.homeTeam} vs ${p.awayTeam}`,
-    linea: LINEA_PRINCIPAL,
-    prediccion: p.prediccion || 'SIN_APUESTA',
-    golesTotales: golesTotales !== '' ? golesTotales : undefined,
-    marcador: marcador || '',
-    acierto,
-    puntosUsados: p.puntosUsados,
-    senalPonderada: p.senalPonderada,
-    versionRegla: VERSION_REGLA,
-    casas35: p.casas35,
-    pinnacleOverApertura: p.pinnacleOverApertura,
-    pinnacleOverCierre: p.pinnacleOverCierre,
-    xgApertura: p.xgApertura,
-    xgCierre: p.xgCierre,
-    recuperadoTarde: p.recuperadoTarde,
-    mov15Over: p.mov15Over, sost15Over: p.sost15Over,
-    mov25Over: p.mov25Over, sost25Over: p.sost25Over,
-    mov35Over: p.mov35Over, sost35Over: p.sost35Over,
-    mov45Over: p.mov45Over, sost45Over: p.sost45Over,
+  return await enviarASheets({
+    fecha: new Date().toISOString(), horaInicioReal: p.horaInicioReal || p.commenceTime,
+    liga: p.sportKey, equipoLocal: p.homeTeam, equipoVisitante: p.awayTeam,
+    partido: `${p.homeTeam} vs ${p.awayTeam}`, linea: LINEA_PRINCIPAL,
+    prediccion: p.prediccion || 'SIN_APUESTA', golesTotales: golesTotales !== '' ? golesTotales : undefined,
+    marcador: marcador || '', acierto, puntosUsados: p.puntosUsados,
+    senalPonderada: p.senalPonderada, versionRegla: VERSION_REGLA, casas35: p.casas35,
+    pinnacleOverApertura: p.pinnacleOverApertura, pinnacleOverCierre: p.pinnacleOverCierre,
+    xgApertura: p.xgApertura, xgCierre: p.xgCierre, recuperadoTarde: p.recuperadoTarde,
+    mov15Over: p.mov15Over, sost15Over: p.sost15Over, mov25Over: p.mov25Over, sost25Over: p.sost25Over,
+    mov35Over: p.mov35Over, sost35Over: p.sost35Over, mov45Over: p.mov45Over, sost45Over: p.sost45Over,
     cuotaOverApertura: p.cuotaOverApertura, cuotaOverCierre: p.cuotaOverCierre,
     cuotaUnderApertura: p.cuotaUnderApertura, cuotaUnderCierre: p.cuotaUnderCierre,
-  };
-
-  return await enviarASheets(payload);
+  });
 }
-
-// ==================================================================
-// TELEGRAM WEBHOOK (Solicitud y Respuesta de Marcador)
-// ==================================================================
 
 async function enviarSolicitudMarcador(matchId) {
   return conBloqueoDB(async () => {
     const db = leerDB();
     const p = db.partidos[matchId];
-    if (!p || p.mensajeMarcadorId) return;
+    if (!p || p.mensajeMarcadorId || p.estado !== 'activo') return;
     const msgId = await enviarTelegram(`⚽ ¿Marcador final de ${p.homeTeam} vs ${p.awayTeam}? Respondé (ej: 2-1).`);
     if (msgId) { p.mensajeMarcadorId = msgId; guardarDB(db); }
   });
@@ -580,11 +577,7 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
 
     const p = db.partidos[matchId];
     const regex = msg.text.match(/(\d+)\s*[-:xX]\s*(\d+)/);
-    
-    if (!regex) {
-      await enviarTelegram('Formato inválido. Respondé "2-1".');
-      return;
-    }
+    if (!regex) { await enviarTelegram('Formato inválido. Respondé "2-1".'); return; }
 
     const mFinal = `${regex[1]}-${regex[2]}`;
     const goles = parseInt(regex[1]) + parseInt(regex[2]);
@@ -595,10 +588,10 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
       if (p.prediccion === 'OVER') result = goles > 3.5 ? '🎉 ¡Acertaste!' : '❌ Fallo.';
       else if (p.prediccion === 'UNDER') result = goles < 3.5 ? '🎉 ¡Acertaste!' : '❌ Fallo.';
       await enviarTelegram(`✅ Registrado: ${mFinal} (${goles} goles). ${result}`);
+      
+      p.estado = 'cerrado';
       delete db.partidos[matchId];
       guardarDB(db);
-    } else {
-      await enviarTelegram('⚠️ Error guardando en Google Sheets. Intentá responder de nuevo.');
     }
   });
 
@@ -610,8 +603,8 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
 // ==================================================================
 
 app.get('/api/estado', (req, res) => {
-  const partidos = Object.values(leerDB().partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
-  res.json({ partidos });
+  const todos = Object.values(leerDB().partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
+  res.json({ partidos: todos.filter(p => p.estado !== 'cerrado' && p.estado !== 'abortado') });
 });
 
 app.get('/api/estadisticas', async (req, res) => {
@@ -637,10 +630,22 @@ app.listen(PORT, async () => {
   
   const db = leerDB();
   Object.entries(db.partidos).forEach(([id, p]) => {
-    if (!p.prediccionEnviada) programarChequeos(id, p);
-    else if (!p.mensajeMarcadorId) {
-      const t = new Date(new Date(p.commenceTime).getTime() + 3*3600000);
-      trabajosActivos.push(schedule.scheduleJob(t, () => enviarSolicitudMarcador(id)));
+    if (p.estado === 'en_cola') {
+      programarChequeoPeaje(id, p);
+    } else if (p.estado === 'activo') {
+      if (!p.prediccionEnviada) {
+        ['6h', '1h', '5m'].forEach(cpFuturo => {
+          const msEjec = new Date(p.commenceTime).getTime() - CHECKPOINTS.find(c => c.clave === cpFuturo).ms;
+          if (msEjec > Date.now() && !p.cuotas[cpFuturo]) {
+            trabajosActivos[`${id}_${cpFuturo}`] = schedule.scheduleJob(new Date(msEjec), () => ejecutarChequeo(id, cpFuturo, false));
+          } else if (msEjec <= Date.now() && !p.cuotas[cpFuturo]) {
+            ejecutarChequeo(id, cpFuturo, true);
+          }
+        });
+      } else if (!p.mensajeMarcadorId) {
+        const t = new Date(new Date(p.commenceTime).getTime() + 3*3600000);
+        trabajosActivos[`${id}_marcador`] = schedule.scheduleJob(t, () => enviarSolicitudMarcador(id));
+      }
     }
   });
 
