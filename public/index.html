@@ -2,133 +2,125 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#0B1210" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Rastreador Over/Under 3.5</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root{
-    --bg:#0B1210; --surface:#121B17; --surface-2:#182420; --line:#223129;
-    --text:#E7EDE9; --muted:#7E9A8C; --over:#3ECF7E; --under:#4C8DFF;
-    --warn:#E8A33D; --pinnacle:#8F8CFF;
+  :root {
+    /* Optimizado para Samsung AMOLED */
+    --bg: #000000; 
+    --surface: #0E1512;
+    --surface-2: #16221D;
+    --line: #223129;
+    --text: #E7EDE9;
+    --muted: #7E9A8C;
+    --over: #3ECF7E;
+    --under: #4C8DFF;
+    --warn: #E8A33D;
+    --pinnacle: #A38CFF;
   }
-  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body{ -webkit-text-size-adjust:100%; }
-  body{
-    margin:0;
-    background: radial-gradient(ellipse at top, #101B16 0%, var(--bg) 55%);
-    color:var(--text);
-    font-family:'Space Grotesk', system-ui, sans-serif;
-    min-height:100vh; min-height:100dvh;
-    display:flex; justify-content:center;
-    padding: 18px 10px 40px;
-    padding-left:  max(10px, env(safe-area-inset-left));
-    padding-right: max(10px, env(safe-area-inset-right));
-    padding-bottom: max(40px, env(safe-area-inset-bottom));
+  
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 24px 14px 60px; /* Padding ajustado para A54 */
   }
-  main{ width:100%; max-width:460px; }
-
-  .marca{ display:flex; align-items:baseline; gap:8px; margin-bottom:4px; }
-  .marca .bola{ font-size:20px; }
-  h1{ font-size:19px; font-weight:700; margin:0; letter-spacing:-0.01em; }
-  p.sub{ color:var(--muted); font-size:13px; margin:2px 0 18px; line-height:1.5; }
-
-  .leyenda{
-    display:flex; gap:14px; flex-wrap:wrap;
-    font-family:'IBM Plex Mono', monospace;
-    font-size:10.5px; margin-bottom:12px; color:var(--muted);
+  
+  main { width: 100%; max-width: 480px; margin: 0 auto; }
+  
+  .marca { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .marca .bola { font-size: 24px; }
+  h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
+  p.sub { color: var(--muted); font-size: 13.5px; margin: 4px 0 24px; line-height: 1.5; }
+  
+  /* Botón Principal */
+  button#buscar {
+    width: 100%; padding: 18px 20px; border-radius: 14px; border: none;
+    background: linear-gradient(180deg, #37B872, #2C9A60); color: #06170F;
+    font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 16px;
+    cursor: pointer; transition: transform .1s ease;
+    box-shadow: 0 4px 14px rgba(55, 184, 114, 0.2);
   }
-  .leyenda .dot{ display:inline-block; width:7px; height:7px; border-radius:50%;
-    margin-right:4px; vertical-align:middle; }
-  .dot-over{ background:var(--over); }
-  .dot-under{ background:var(--under); }
-  .dot-pin{ background:var(--pinnacle); }
-
-  button#buscar{
-    width:100%; padding:15px 18px; border-radius:12px;
-    border:1px solid var(--over);
-    background:linear-gradient(180deg,#37B872,#2C9A60);
-    color:#06170F; font-family:'Space Grotesk',sans-serif; font-weight:700;
-    font-size:15px; cursor:pointer; -webkit-appearance:none; appearance:none;
-    touch-action:manipulation;
-    transition: transform .12s ease, filter .12s ease;
+  button#buscar:active { transform: scale(0.97); }
+  button#buscar:disabled { background: var(--surface-2); color: var(--muted); box-shadow: none; }
+  
+  #estadoTexto { margin: 12px 2px 0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); min-height: 18px; }
+  
+  /* Estadísticas */
+  .stats { display: flex; gap: 10px; margin-bottom: 24px; }
+  .stats .stat { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 8px; text-align: center; }
+  .stats .stat .valor { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 20px; letter-spacing: -0.02em;}
+  .stats .stat .etiqueta { font-size: 10px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500;}
+  .stats .stat.racha-positiva .valor { color: var(--over); }
+  .stats .stat.racha-negativa .valor { color: var(--warn); }
+  
+  /* Títulos de Sección */
+  .seccion-titulo {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin: 32px 0 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: space-between;
   }
-  button#buscar:hover{ filter:brightness(1.06); }
-  button#buscar:active{ transform:scale(0.98); }
-  button#buscar:disabled{ background:var(--surface-2); border-color:var(--line);
-    color:var(--muted); cursor:default; }
-
-  #estadoTexto{ margin:12px 2px 0; font-family:'IBM Plex Mono',monospace;
-    font-size:12px; color:var(--muted); min-height:16px; line-height:1.5; }
-
-  .stats{ display:flex; gap:8px; margin-bottom:18px; }
-  .stats .stat{ flex:1; min-width:0; background:var(--surface);
-    border:1px solid var(--line); border-radius:12px; padding:10px 6px; text-align:center; }
-  .stats .stat .valor{ font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:18px; }
-  .stats .stat .etiqueta{ font-size:9.5px; color:var(--muted); margin-top:2px;
-    text-transform:uppercase; letter-spacing:.03em; }
-  .stats .stat.racha-positiva .valor{ color:var(--over); }
-  .stats .stat.racha-negativa .valor{ color:var(--warn); }
-
-  .tarjetas{ margin-top:20px; display:flex; flex-direction:column; gap:12px; }
-  .vacio{ border:1px dashed var(--line); border-radius:12px; padding:20px 16px;
-    color:var(--muted); font-size:13px; line-height:1.6; }
-
-  .partido{ background:var(--surface); border:1px solid var(--line);
-    border-radius:14px; padding:14px 12px 12px; }
-  .partido .etiqueta{ color:var(--muted); font-family:'IBM Plex Mono',monospace;
-    font-size:10.5px; margin-bottom:4px; }
-  .partido h2{ font-size:15px; margin:0 0 3px; font-weight:700; line-height:1.25; }
-  .partido .fecha{ font-family:'IBM Plex Mono',monospace; font-size:11px;
-    color:var(--muted); margin-bottom:10px; }
-
-  .tabla-scroll{
-    overflow-x:auto; -webkit-overflow-scrolling:touch;
-    margin-bottom:10px; padding-bottom:4px; scrollbar-width:thin;
+  .badge-count { background: var(--surface-2); padding: 2px 8px; border-radius: 10px; font-size: 12px; color: var(--text); }
+  
+  .tarjetas { display: flex; flex-direction: column; gap: 16px; }
+  .vacio { border: 1px dashed var(--line); border-radius: 14px; padding: 24px 20px; color: var(--muted); font-size: 13.5px; line-height: 1.6; text-align: center;}
+  
+  /* Tarjeta de Partido */
+  .partido { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; overflow: hidden;}
+  .partido.en-cola { opacity: 0.85; border-style: dashed; }
+  
+  .partido-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+  .partido-info h2 { font-size: 16px; margin: 0 0 4px; font-weight: 700; line-height: 1.3;}
+  .partido-info .fecha { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
+  
+  .status-tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    padding: 4px 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace;
   }
-  .tabla-scroll::-webkit-scrollbar{ height:4px; }
-  .tabla-scroll::-webkit-scrollbar-thumb{ background:var(--line); border-radius:2px; }
-
-  table.cuotas{
-    width:100%; border-collapse:collapse;
-    font-family:'IBM Plex Mono', monospace; font-size:10.5px;
+  .status-tag.activo { background: rgba(62, 207, 126, 0.15); color: var(--over); border: 1px solid rgba(62, 207, 126, 0.3); }
+  .status-tag.cola { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+  
+  /* Tabla Scrollable con Columna Pegajosa para Móviles */
+  .tabla-scroll {
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    margin: 0 -16px 12px; padding: 0 16px;
   }
-  table.cuotas th{
-    text-align:center; color:var(--muted); font-weight:500;
-    padding:4px 2px 6px; border-bottom:1px solid var(--line); font-size:10px;
+  table.cuotas { width: 100%; min-width: 460px; border-collapse: separate; border-spacing: 0; font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+  table.cuotas th, table.cuotas td { padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+  table.cuotas th { color: var(--muted); font-weight: 600; text-align: left; padding-top: 0; }
+  
+  /* Magia para Samsung: La primera columna se queda pegada al hacer scroll horizontal */
+  table.cuotas th:first-child, table.cuotas td:first-child {
+    position: sticky; left: 0; background: var(--surface); z-index: 2;
+    border-right: 1px solid var(--line); padding-left: 0;
   }
-  table.cuotas th:first-child{ text-align:left; padding-left:0; }
-  table.cuotas td{
-    padding:6px 2px; border-bottom:1px solid var(--line);
-    text-align:center; vertical-align:top; line-height:1.35; white-space:nowrap;
+  .partido.en-cola table.cuotas th:first-child, .partido.en-cola table.cuotas td:first-child {
+    background: var(--bg); /* Se adapta si la tarjeta es transparente */
   }
-  table.cuotas td:first-child{ text-align:left; padding-left:0; white-space:normal; }
-  table.cuotas tr:last-child td{ border-bottom:none; }
-
-  .over-val{ color:var(--over); font-weight:500; }
-  .under-val{ color:var(--under); font-weight:500; }
-  .pendiente{ color:var(--muted); }
-  .pinnacle-row{ display:block; font-size:8px; color:var(--pinnacle);
-    margin-top:1px; letter-spacing:-.02em; }
-  .metricas-row{ display:block; font-size:9px; color:var(--muted); margin-top:1px; }
-  .info-cp{ font-size:10px; font-weight:500; color:var(--text); }
-
-  .prediccion-badge{
-    padding:9px 12px; border-radius:8px; font-size:12px; text-align:center;
-    font-family:'IBM Plex Mono',monospace; font-weight:700;
-    background:var(--surface-2); border:1px solid var(--line); margin-top:4px;
+  
+  table.cuotas tr:last-child td { border-bottom: none; }
+  
+  .over-val { color: var(--over); font-weight: 600;}
+  .under-val { color: var(--under); font-weight: 600;}
+  .pendiente { color: var(--muted); opacity: 0.5; }
+  
+  .pinnacle-row { display: block; font-size: 9px; color: var(--pinnacle); margin-top: 4px; font-weight: 500;}
+  .metricas-row { display: block; font-size: 9px; color: var(--muted); margin-top: 4px; }
+  
+  /* Badge de Veredicto */
+  .prediccion-badge {
+    padding: 12px; border-radius: 10px; font-size: 13px; text-align: center; margin-top: 4px;
+    font-family: 'IBM Plex Mono', monospace; font-weight: 700; background: var(--surface-2); border: 1px solid var(--line);
   }
-  .prediccion-badge.OVER{ border-color:var(--over); color:var(--over); }
-  .prediccion-badge.UNDER{ border-color:var(--under); color:var(--under); }
-  .prediccion-badge.SIN_APUESTA{ border-color:var(--warn); color:var(--warn); }
-
-  @media (max-width: 380px){
-    body{ padding:14px 8px 32px; }
-    main{ max-width:100%; }
-    table.cuotas{ font-size:10px; }
-    .pinnacle-row{ font-size:7.5px; }
-  }
+  .prediccion-badge.OVER { border-color: var(--over); color: var(--over); background: rgba(62, 207, 126, 0.05);}
+  .prediccion-badge.UNDER { border-color: var(--under); color: var(--under); background: rgba(76, 141, 255, 0.05);}
+  .prediccion-badge.SIN_APUESTA { border-color: var(--warn); color: var(--warn); opacity: 0.8;}
 </style>
 </head>
 <body>
@@ -137,77 +129,92 @@
     <span class="bola">⚽</span>
     <h1>Rastreador Veredicto 3.5</h1>
   </div>
-  <p class="sub">Evalúa Goles Esperados (xG), rastrea precios de Pinnacle y determina una predicción oficial sobre la línea 3.5 basada en movimiento de mercado.</p>
+  <p class="sub">Optimizado con Peaje de 24h. Los partidos que abren con cuota ≥ 2.50 se descartan automáticamente para ahorrar créditos.</p>
 
   <div class="stats" id="stats">
     <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% winrate</div></div>
-    <div class="stat"><div class="valor" id="statTotal">—</div><div class="etiqueta">analizados</div></div>
+    <div class="stat"><div class="valor" id="statTotal">—</div><div class="etiqueta">finalizados</div></div>
     <div class="stat" id="statRachaBox"><div class="valor" id="statRacha">—</div><div class="etiqueta">racha</div></div>
   </div>
 
-  <button id="buscar">Buscar Partidos y Programar</button>
+  <button id="buscar">Escanear Calendario y Encolar</button>
   <div id="estadoTexto"></div>
 
-  <div class="leyenda">
-    <span><span class="dot dot-over"></span>Over</span>
-    <span><span class="dot dot-under"></span>Under</span>
-    <span><span class="dot dot-pin"></span>Pinnacle</span>
+  <div class="seccion-titulo" id="tituloActivos" style="display:none;">
+    Partidos Activos <span class="badge-count" id="countActivos">0</span>
+  </div>
+  <div class="tarjetas" id="tarjetasActivos"></div>
+
+  <div class="seccion-titulo" id="tituloCola" style="display:none;">
+    En Cola de Espera <span class="badge-count" id="countCola">0</span>
+  </div>
+  <div class="tarjetas" id="tarjetasCola"></div>
+  
+  <div id="vacioGlobal" class="vacio" style="margin-top: 32px;">
+    Calendario vacío. Presiona el botón verde para buscar los partidos del día y enviarlos a la cola de peaje.
   </div>
 
-  <div class="tarjetas" id="tarjetas">
-    <div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día.</div>
-  </div>
 </main>
 
 <script>
 const boton = document.getElementById('buscar');
 const estadoTexto = document.getElementById('estadoTexto');
-const tarjetas = document.getElementById('tarjetas');
+const tarjetasActivos = document.getElementById('tarjetasActivos');
+const tarjetasCola = document.getElementById('tarjetasCola');
+const tituloActivos = document.getElementById('tituloActivos');
+const tituloCola = document.getElementById('tituloCola');
+const countActivos = document.getElementById('countActivos');
+const countCola = document.getElementById('countCola');
+const vacioGlobal = document.getElementById('vacioGlobal');
+
 const statAciertos = document.getElementById('statAciertos');
 const statTotal = document.getElementById('statTotal');
 const statRacha = document.getElementById('statRacha');
 const statRachaBox = document.getElementById('statRachaBox');
 
 const CHECKPOINTS = [
-  { clave:'24h', etiqueta:'24h antes' },
-  { clave:'6h',  etiqueta:'6h antes'  },
-  { clave:'1h',  etiqueta:'1h antes'  },
-  { clave:'5m',  etiqueta:'5m antes'  },
+  { clave: '24h', etiqueta: '24h' },
+  { clave: '6h', etiqueta: '6h' },
+  { clave: '1h', etiqueta: '1h' },
+  { clave: '5m', etiqueta: '5m' },
 ];
 
-// Las 6 líneas ahora son visibles Y se usan para xG
-const LINEAS = ['0.5','1.5','2.5','3.5','4.5','5.5'];
-const LINEAS_XG = LINEAS;
+const LINEAS = ['1.5', '2.5', '3.5', '4.5'];
+const LINEAS_XG = ['0.5', '1.5', '2.5', '3.5', '4.5', '5.5'];
 
 async function refrescarEstadisticas(){
   try{
     const res = await fetch('/api/estadisticas');
     const s = await res.json();
-    statAciertos.textContent = (s.winrate !== undefined && s.winrate !== null) ? `${s.winrate}%` : '—';
+    statAciertos.textContent = s.winrate !== undefined && s.winrate !== null ? `${s.winrate}%` : '—';
     statTotal.textContent = s.resueltos ?? '—';
-    statRachaBox.classList.remove('racha-positiva','racha-negativa');
-    if (s.rachaActual > 0){ statRacha.textContent = `+${s.rachaActual}`; statRachaBox.classList.add('racha-positiva'); }
-    else if (s.rachaActual < 0){ statRacha.textContent = `${s.rachaActual}`; statRachaBox.classList.add('racha-negativa'); }
-    else { statRacha.textContent = '—'; }
-  }catch(err){ console.error(err); }
+    statRachaBox.classList.remove('racha-positiva', 'racha-negativa');
+    if (s.rachaActual > 0){
+      statRacha.textContent = `+${s.rachaActual}`;
+      statRachaBox.classList.add('racha-positiva');
+    } else if (s.rachaActual < 0){
+      statRacha.textContent = `${s.rachaActual}`;
+      statRachaBox.classList.add('racha-negativa');
+    } else {
+      statRacha.textContent = '—';
+    }
+  }catch(err){}
 }
 
-function formatearFecha(iso){ return new Date(iso).toLocaleString('es-ES',{ dateStyle:'medium', timeStyle:'short' }); }
-
-function celda(dato, pinnacle){
-  if (!dato) return '<span class="pendiente">—</span>';
-  let html = `<span class="over-val">${dato.over}</span><br><span class="under-val">${dato.under}</span>`;
-  if (pinnacle && pinnacle.over && pinnacle.under){
-    html += `<br><span class="pinnacle-row">${pinnacle.over}/${pinnacle.under}</span>`;
-  }
-  return html;
+function formatearFecha(iso){ 
+  return new Date(iso).toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); 
 }
 
-function calcularXG(lineas){
+function celda(dato){
+  if (!dato) return '<span class="pendiente">— / —</span>';
+  return `<span class="over-val">${dato.over}</span> <span style="color:var(--muted)">/</span> <span class="under-val">${dato.under}</span>`;
+}
+
+function calcularXG(lineas) {
   if (!lineas) return '—';
   let xg = 0;
-  for (const n of LINEAS_XG){
-    if (lineas[n] && lineas[n].over && lineas[n].under){
+  for (const n of LINEAS_XG) {
+    if (lineas[n] && lineas[n].over && lineas[n].under) {
       const pOver = 1 / lineas[n].over;
       const pUnder = 1 / lineas[n].under;
       xg += pOver / (pOver + pUnder);
@@ -216,55 +223,55 @@ function calcularXG(lineas){
   return xg > 0 ? xg.toFixed(2) : '—';
 }
 
-const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-function formatearDiaCorto(diaLocal){
-  const [, mes, dia] = diaLocal.split('-').map(Number);
-  return `${dia} ${MESES[mes-1]}`;
-}
-
 function renderPartido(partido){
-  const etiqueta = `Partido ${partido.etiqueta} · ${formatearDiaCorto(partido.diaLocal)}`;
-
+  const esActivo = partido.estado === 'activo';
+  const tagClass = esActivo ? 'activo' : 'cola';
+  const tagText = esActivo ? 'ACTIVO' : 'EN COLA';
+  
   const filas = CHECKPOINTS.map(cp => {
     const chequeo = partido.cuotas && partido.cuotas[cp.clave];
-    const lineas  = chequeo && chequeo.lineas;
-    const xg      = calcularXG(lineas);
-    const casas   = (chequeo && chequeo.casas35) ? chequeo.casas35 : '—';
+    const lineas = chequeo && chequeo.lineas;
+    const xg = calcularXG(lineas);
+    const casas = chequeo && chequeo.casas35 ? chequeo.casas35 : '—';
 
     const celdas = LINEAS.map(l => {
-      const dato = lineas && lineas[l];
-      const pin  = (l === '3.5' && chequeo) ? chequeo.pinnacle35 : null;
-      return `<td>${celda(dato, pin)}</td>`;
+      let contenido = celda(lineas && lineas[l]);
+      if (l === '3.5' && chequeo && chequeo.pinnacle35 && chequeo.pinnacle35.over) {
+        contenido += `<div class="pinnacle-row">PIN: ${chequeo.pinnacle35.over} / ${chequeo.pinnacle35.under}</div>`;
+      }
+      return `<td>${contenido}</td>`;
     }).join('');
 
     return `
       <tr>
         <td>
-          <span class="info-cp">${cp.etiqueta}</span>
-          <span class="metricas-row">xG: ${xg}</span>
-          <span class="metricas-row">Casas: ${casas}</span>
+          ${cp.etiqueta}
+          <div class="metricas-row">xG: ${xg} | 🏠: ${casas}</div>
         </td>
         ${celdas}
       </tr>`;
   }).join('');
 
   let badgeHtml = '';
-  if (partido.prediccionEnviada){
+  if (partido.prediccionEnviada) {
     const p = partido.prediccion || 'SIN_APUESTA';
-    const senalText = partido.senalPonderada !== undefined ? ` · señal ${partido.senalPonderada}` : '';
+    const senalText = partido.senalPonderada !== undefined ? `<br><span style="font-size:10px;font-weight:400;opacity:0.8">Señal: ${partido.senalPonderada}</span>` : '';
     badgeHtml = `<div class="prediccion-badge ${p}">VEREDICTO: ${p} 3.5${senalText}</div>`;
   }
 
-  const headCells = LINEAS.map(l => `<th>${l}</th>`).join('');
-
   return `
-    <div class="partido">
-      <div class="etiqueta">${etiqueta}</div>
-      <h2>${partido.homeTeam} vs ${partido.awayTeam}</h2>
-      <div class="fecha">${formatearFecha(partido.commenceTime)}</div>
+    <div class="partido ${!esActivo ? 'en-cola' : ''}">
+      <div class="partido-header">
+        <div class="partido-info">
+          <h2>${partido.homeTeam} vs ${partido.awayTeam}</h2>
+          <div class="fecha">${formatearFecha(partido.commenceTime)}</div>
+        </div>
+        <div class="status-tag ${tagClass}">${tagText}</div>
+      </div>
+      
       <div class="tabla-scroll">
         <table class="cuotas">
-          <thead><tr><th>Info</th>${headCells}</tr></thead>
+          <thead><tr><th>CHQ</th><th>1.5</th><th>2.5</th><th>3.5</th><th>4.5</th></tr></thead>
           <tbody>${filas}</tbody>
         </table>
       </div>
@@ -278,20 +285,48 @@ async function refrescarEstado(){
     const res = await fetch('/api/estado');
     const data = await res.json();
     const partidos = data.partidos || [];
+    
+    const activos = partidos.filter(p => p.estado === 'activo');
+    const enCola = partidos.filter(p => p.estado === 'en_cola');
+
     if (partidos.length === 0){
-      tarjetas.innerHTML = '<div class="vacio">Todavía no hay partidos programados. Presiona el botón de arriba para elegir los partidos del día.</div>';
+      vacioGlobal.style.display = 'block';
+      tituloActivos.style.display = 'none';
+      tituloCola.style.display = 'none';
+      tarjetasActivos.innerHTML = '';
+      tarjetasCola.innerHTML = '';
       return;
     }
-    tarjetas.innerHTML = partidos.map(p => renderPartido(p)).join('');
+    
+    vacioGlobal.style.display = 'none';
+
+    if(activos.length > 0) {
+      tituloActivos.style.display = 'flex';
+      countActivos.textContent = activos.length;
+      tarjetasActivos.innerHTML = activos.map(p => renderPartido(p)).join('');
+    } else {
+      tituloActivos.style.display = 'none';
+      tarjetasActivos.innerHTML = '';
+    }
+
+    if(enCola.length > 0) {
+      tituloCola.style.display = 'flex';
+      countCola.textContent = enCola.length;
+      tarjetasCola.innerHTML = enCola.map(p => renderPartido(p)).join('');
+    } else {
+      tituloCola.style.display = 'none';
+      tarjetasCola.innerHTML = '';
+    }
+
   }catch(err){}
 }
 
 boton.addEventListener('click', async () => {
   boton.disabled = true;
-  boton.textContent = 'Buscando partidos…';
+  boton.textContent = 'Escaneando...';
   estadoTexto.textContent = '';
   try{
-    const res = await fetch('/api/buscar-partidos', { method:'POST' });
+    const res = await fetch('/api/buscar-partidos', { method: 'POST' });
     const data = await res.json();
     estadoTexto.textContent = data.mensaje || (data.ok ? 'Listo.' : 'Ocurrió un error.');
     await refrescarEstado();
@@ -299,7 +334,7 @@ boton.addEventListener('click', async () => {
     estadoTexto.textContent = 'Error de conexión.';
   }finally{
     boton.disabled = false;
-    boton.textContent = 'Buscar Partidos y Programar';
+    boton.textContent = 'Escanear Calendario y Encolar';
   }
 });
 
