@@ -3,13 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Rastreador Over/Under 3.5</title>
+<title>Rastreador OVER 3.5 v4.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* Optimizado para Samsung AMOLED */
-    --bg: #000000; 
+    --bg: #000000;
     --surface: #0E1512;
     --surface-2: #16221D;
     --line: #223129;
@@ -20,26 +19,25 @@
     --warn: #E8A33D;
     --pinnacle: #A38CFF;
   }
-  
+
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  
+
   body {
     margin: 0;
     background-color: var(--bg);
     color: var(--text);
     font-family: 'Space Grotesk', system-ui, sans-serif;
     min-height: 100vh;
-    padding: 24px 14px 60px; /* Padding ajustado para A54 */
+    padding: 24px 14px 60px;
   }
-  
+
   main { width: 100%; max-width: 480px; margin: 0 auto; }
-  
+
   .marca { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
   .marca .bola { font-size: 24px; }
   h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
-  p.sub { color: var(--muted); font-size: 13.5px; margin: 4px 0 24px; line-height: 1.5; }
-  
-  /* Botón Principal */
+  p.sub { color: var(--muted); font-size: 13px; margin: 4px 0 24px; line-height: 1.5; }
+
   button#buscar {
     width: 100%; padding: 18px 20px; border-radius: 14px; border: none;
     background: linear-gradient(180deg, #37B872, #2C9A60); color: #06170F;
@@ -49,44 +47,41 @@
   }
   button#buscar:active { transform: scale(0.97); }
   button#buscar:disabled { background: var(--surface-2); color: var(--muted); box-shadow: none; }
-  
+
   #estadoTexto { margin: 12px 2px 0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); min-height: 18px; }
-  
-  /* Estadísticas */
+
   .stats { display: flex; gap: 10px; margin-bottom: 24px; }
   .stats .stat { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 8px; text-align: center; }
   .stats .stat .valor { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 20px; letter-spacing: -0.02em;}
   .stats .stat .etiqueta { font-size: 10px; color: var(--muted); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500;}
   .stats .stat.racha-positiva .valor { color: var(--over); }
   .stats .stat.racha-negativa .valor { color: var(--warn); }
-  
-  /* Títulos de Sección */
+
   .seccion-titulo {
     font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em;
     color: var(--muted); margin: 32px 0 12px; font-weight: 700;
     display: flex; align-items: center; justify-content: space-between;
   }
   .badge-count { background: var(--surface-2); padding: 2px 8px; border-radius: 10px; font-size: 12px; color: var(--text); }
-  
+
   .tarjetas { display: flex; flex-direction: column; gap: 16px; }
   .vacio { border: 1px dashed var(--line); border-radius: 14px; padding: 24px 20px; color: var(--muted); font-size: 13.5px; line-height: 1.6; text-align: center;}
-  
-  /* Tarjeta de Partido */
+
   .partido { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; overflow: hidden;}
   .partido.en-cola { opacity: 0.85; border-style: dashed; }
-  
+
   .partido-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
   .partido-info h2 { font-size: 16px; margin: 0 0 4px; font-weight: 700; line-height: 1.3;}
   .partido-info .fecha { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
-  
+
   .status-tag {
     font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
     padding: 4px 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace;
   }
   .status-tag.activo { background: rgba(62, 207, 126, 0.15); color: var(--over); border: 1px solid rgba(62, 207, 126, 0.3); }
   .status-tag.cola { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
-  
-  /* Tabla Scrollable con Columna Pegajosa para Móviles */
+  .status-tag.prometedor { background: rgba(232, 163, 61, 0.15); color: var(--warn); border: 1px solid rgba(232, 163, 61, 0.3); }
+
   .tabla-scroll {
     overflow-x: auto; -webkit-overflow-scrolling: touch;
     margin: 0 -16px 12px; padding: 0 16px;
@@ -94,46 +89,61 @@
   table.cuotas { width: 100%; min-width: 460px; border-collapse: separate; border-spacing: 0; font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
   table.cuotas th, table.cuotas td { padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
   table.cuotas th { color: var(--muted); font-weight: 600; text-align: left; padding-top: 0; }
-  
-  /* Magia para Samsung: La primera columna se queda pegada al hacer scroll horizontal */
+
   table.cuotas th:first-child, table.cuotas td:first-child {
     position: sticky; left: 0; background: var(--surface); z-index: 2;
     border-right: 1px solid var(--line); padding-left: 0;
   }
   .partido.en-cola table.cuotas th:first-child, .partido.en-cola table.cuotas td:first-child {
-    background: var(--bg); /* Se adapta si la tarjeta es transparente */
+    background: var(--bg);
   }
-  
+
   table.cuotas tr:last-child td { border-bottom: none; }
-  
+
   .over-val { color: var(--over); font-weight: 600;}
   .under-val { color: var(--under); font-weight: 600;}
   .pendiente { color: var(--muted); opacity: 0.5; }
-  
+
   .pinnacle-row { display: block; font-size: 9px; color: var(--pinnacle); margin-top: 4px; font-weight: 500;}
   .metricas-row { display: block; font-size: 9px; color: var(--muted); margin-top: 4px; }
-  
-  /* Badge de Veredicto */
+  .linea-principal-row { display: block; font-size: 9px; color: var(--over); margin-top: 2px; font-weight: 600;}
+
+  .metricas-extra {
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px;
+  }
+  .metricas-extra .chip {
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; color: var(--muted);
+  }
+  .metricas-extra .chip b { color: var(--text); font-weight: 600; }
+  .metricas-extra .chip.pos b { color: var(--over); }
+  .metricas-extra .chip.neg b { color: var(--warn); }
+
   .prediccion-badge {
     padding: 12px; border-radius: 10px; font-size: 13px; text-align: center; margin-top: 4px;
     font-family: 'IBM Plex Mono', monospace; font-weight: 700; background: var(--surface-2); border: 1px solid var(--line);
   }
   .prediccion-badge.OVER { border-color: var(--over); color: var(--over); background: rgba(62, 207, 126, 0.05);}
-  .prediccion-badge.UNDER { border-color: var(--under); color: var(--under); background: rgba(76, 141, 255, 0.05);}
-  .prediccion-badge.SIN_APUESTA { border-color: var(--warn); color: var(--warn); opacity: 0.8;}
+  .prediccion-badge.SIN_APUESTA { border-color: var(--warn); color: var(--warn); opacity: 0.85;}
+
+  .score-bar {
+    margin-top: 6px; height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden;
+  }
+  .score-bar-fill { height: 100%; background: linear-gradient(90deg, var(--warn), var(--over)); transition: width .3s; }
 </style>
 </head>
 <body>
 <main>
   <div class="marca">
     <span class="bola">⚽</span>
-    <h1>Rastreador Veredicto 3.5</h1>
+    <h1>Rastreador OVER 3.5 v4.2</h1>
   </div>
-  <p class="sub">Optimizado con Peaje de 24h. Los partidos que abren con cuota ≥ 2.50 se descartan automáticamente para ahorrar créditos.</p>
+  <p class="sub">Peaje dinámico 24h (cuota &lt; 2.20 + xG ≥ 2.30 + casas ≥ 4). Score multi-factor decide OVER (≥60/100). Solo OVER, sin UNDER. v4.2: cleanup automático de partidos colgados.</p>
 
   <div class="stats" id="stats">
-    <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% winrate</div></div>
-    <div class="stat"><div class="valor" id="statTotal">—</div><div class="etiqueta">finalizados</div></div>
+    <div class="stat"><div class="valor" id="statAciertos">—</div><div class="etiqueta">% winrate OVER</div></div>
+    <div class="stat"><div class="valor" id="statTotal">—</div><div class="etiqueta">OVER resueltos</div></div>
     <div class="stat" id="statRachaBox"><div class="valor" id="statRacha">—</div><div class="etiqueta">racha</div></div>
   </div>
 
@@ -149,7 +159,7 @@
     En Cola de Espera <span class="badge-count" id="countCola">0</span>
   </div>
   <div class="tarjetas" id="tarjetasCola"></div>
-  
+
   <div id="vacioGlobal" class="vacio" style="margin-top: 32px;">
     Calendario vacío. Presiona el botón verde para buscar los partidos del día y enviarlos a la cola de peaje.
   </div>
@@ -174,13 +184,12 @@ const statRachaBox = document.getElementById('statRachaBox');
 
 const CHECKPOINTS = [
   { clave: '24h', etiqueta: '24h' },
-  { clave: '6h', etiqueta: '6h' },
   { clave: '1h', etiqueta: '1h' },
   { clave: '5m', etiqueta: '5m' },
 ];
 
 const LINEAS = ['1.5', '2.5', '3.5', '4.5'];
-const LINEAS_XG = ['0.5', '1.5', '2.5', '3.5', '4.5', '5.5'];
+const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 
 async function refrescarEstadisticas(){
   try{
@@ -201,8 +210,8 @@ async function refrescarEstadisticas(){
   }catch(err){}
 }
 
-function formatearFecha(iso){ 
-  return new Date(iso).toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); 
+function formatearFecha(iso){
+  return new Date(iso).toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function celda(dato){
@@ -210,29 +219,66 @@ function celda(dato){
   return `<span class="over-val">${dato.over}</span> <span style="color:var(--muted)">/</span> <span class="under-val">${dato.under}</span>`;
 }
 
-function calcularXG(lineas) {
+function calcularXGPoisson(lineas) {
   if (!lineas) return '—';
-  let xg = 0;
-  for (const n of LINEAS_XG) {
-    if (lineas[n] && lineas[n].over && lineas[n].under) {
-      const pOver = 1 / lineas[n].over;
-      const pUnder = 1 / lineas[n].under;
-      xg += pOver / (pOver + pUnder);
-    }
+  const observaciones = [];
+  for (const [lineaStr, q] of Object.entries(lineas)) {
+    if (!q?.over || !q?.under) continue;
+    const pOverImpl = 1 / q.over;
+    const pUnderImpl = 1 / q.under;
+    const pOverMercado = pOverImpl / (pOverImpl + pUnderImpl);
+    observaciones.push({ N: Math.floor(parseFloat(lineaStr)), pOver: pOverMercado });
   }
-  return xg > 0 ? xg.toFixed(2) : '—';
+  if (observaciones.length < 4) return '—';
+
+  function cdfPoisson(lambda, N) {
+    if (N < 0) return 0;
+    let term = Math.exp(-lambda);
+    let cdf = term;
+    for (let k = 1; k <= N; k++) {
+      term = term * lambda / k;
+      cdf += term;
+    }
+    return cdf;
+  }
+
+  let mejorLambda = null;
+  let mejorError = Infinity;
+  for (let lam = 0.3; lam <= 7.001; lam += 0.05) {
+    let error = 0;
+    for (const obs of observaciones) {
+      const diff = obs.pOver - (1 - cdfPoisson(lam, obs.N));
+      error += diff * diff;
+    }
+    const mse = error / observaciones.length;
+    if (mse < mejorError) { mejorError = mse; mejorLambda = lam; }
+  }
+  return mejorLambda !== null ? mejorLambda.toFixed(2) : '—';
+}
+
+function lineaPrincipal(lineas) {
+  if (!lineas) return null;
+  let mejor = null, diff = Infinity;
+  for (const [lStr, q] of Object.entries(lineas)) {
+    if (!q?.over || !q?.under) continue;
+    const d = Math.abs(q.over - q.under);
+    if (d < diff) { diff = d; mejor = parseFloat(lStr); }
+  }
+  return mejor;
 }
 
 function renderPartido(partido){
   const esActivo = partido.estado === 'activo';
-  const tagClass = esActivo ? 'activo' : 'cola';
-  const tagText = esActivo ? 'ACTIVO' : 'EN COLA';
-  
+  const esPrometedor = partido.nivelPeaje === 'PROMETEDOR';
+  const tagClass = esPrometedor ? 'prometedor' : (esActivo ? 'activo' : 'cola');
+  const tagText = esPrometedor ? 'PROMETEDOR' : (esActivo ? 'ACTIVO' : 'EN COLA');
+
   const filas = CHECKPOINTS.map(cp => {
     const chequeo = partido.cuotas && partido.cuotas[cp.clave];
     const lineas = chequeo && chequeo.lineas;
-    const xg = calcularXG(lineas);
+    const xg = calcularXGPoisson(lineas);
     const casas = chequeo && chequeo.casas35 ? chequeo.casas35 : '—';
+    const lp = lineaPrincipal(lineas);
 
     const celdas = LINEAS.map(l => {
       let contenido = celda(lineas && lineas[l]);
@@ -242,21 +288,54 @@ function renderPartido(partido){
       return `<td>${contenido}</td>`;
     }).join('');
 
+    const lpInfo = lp !== null ? `<div class="linea-principal-row">LP: ${lp}</div>` : '';
+
     return `
       <tr>
         <td>
           ${cp.etiqueta}
           <div class="metricas-row">xG: ${xg} | 🏠: ${casas}</div>
+          ${lpInfo}
         </td>
         ${celdas}
       </tr>`;
   }).join('');
 
+  let metricasHtml = '';
+  const tieneMetricas = (partido.lineaPrincipal24h !== undefined && partido.lineaPrincipal24h !== '')
+    || (partido.pinVentaja5m !== undefined && partido.pinVentaja5m !== '');
+  if (tieneMetricas && partido.prediccionEnviada) {
+    const lp24 = partido.lineaPrincipal24h ?? '—';
+    const lp5m = partido.lineaPrincipal5m ?? '—';
+    const deltaLp = partido.deltaLineaPrincipal;
+    let chipDelta = '';
+    if (deltaLp !== '' && deltaLp !== undefined && deltaLp !== null) {
+      const signo = deltaLp > 0 ? '+' : '';
+      const clase = deltaLp > 0 ? 'pos' : (deltaLp < 0 ? 'neg' : '');
+      chipDelta = `<div class="chip ${clase}">ΔLP <b>${signo}${deltaLp}</b></div>`;
+    }
+    let chipPin = '';
+    const pv = partido.pinVentaja5m;
+    if (pv !== '' && pv !== undefined && pv !== null) {
+      const signo = pv > 0 ? '+' : '';
+      const clase = pv > 0 ? 'pos' : (pv < 0 ? 'neg' : '');
+      chipPin = `<div class="chip ${clase}">PinV <b>${signo}${pv}</b></div>`;
+    }
+    metricasHtml = `
+      <div class="metricas-extra">
+        <div class="chip">LP 24h→5m <b>${lp24} → ${lp5m}</b></div>
+        ${chipDelta}
+        ${chipPin}
+      </div>`;
+  }
+
   let badgeHtml = '';
   if (partido.prediccionEnviada) {
     const p = partido.prediccion || 'SIN_APUESTA';
-    const senalText = partido.senalPonderada !== undefined ? `<br><span style="font-size:10px;font-weight:400;opacity:0.8">Señal: ${partido.senalPonderada}</span>` : '';
-    badgeHtml = `<div class="prediccion-badge ${p}">VEREDICTO: ${p} 3.5${senalText}</div>`;
+    const scoreVal = (partido.scoreOver !== undefined && partido.scoreOver !== null) ? partido.scoreOver : null;
+    const scoreText = scoreVal !== null ? `<div class="score-bar"><div class="score-bar-fill" style="width:${scoreVal}%"></div></div><br><span style="font-size:11px;font-weight:600">Score: ${scoreVal}/100</span>` : '';
+    const motivo = partido.motivoDecision ? `<br><span style="font-size:9px;font-weight:400;opacity:0.7">motivo: ${partido.motivoDecision}</span>` : '';
+    badgeHtml = `<div class="prediccion-badge ${p}">VEREDICTO: ${p} 3.5${scoreText}${motivo}</div>`;
   }
 
   return `
@@ -268,13 +347,14 @@ function renderPartido(partido){
         </div>
         <div class="status-tag ${tagClass}">${tagText}</div>
       </div>
-      
+
       <div class="tabla-scroll">
         <table class="cuotas">
           <thead><tr><th>CHQ</th><th>1.5</th><th>2.5</th><th>3.5</th><th>4.5</th></tr></thead>
           <tbody>${filas}</tbody>
         </table>
       </div>
+      ${metricasHtml}
       ${badgeHtml}
     </div>
   `;
@@ -285,7 +365,7 @@ async function refrescarEstado(){
     const res = await fetch('/api/estado');
     const data = await res.json();
     const partidos = data.partidos || [];
-    
+
     const activos = partidos.filter(p => p.estado === 'activo');
     const enCola = partidos.filter(p => p.estado === 'en_cola');
 
@@ -297,7 +377,7 @@ async function refrescarEstado(){
       tarjetasCola.innerHTML = '';
       return;
     }
-    
+
     vacioGlobal.style.display = 'none';
 
     if(activos.length > 0) {
