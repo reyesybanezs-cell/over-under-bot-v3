@@ -38,30 +38,26 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.3';
+const VERSION_REGLA = 'v4.4';
 
-// ============================================================
-// v4.3: TODAS LAS PALANCAS TRADE-OFF APLICADAS
-// ============================================================
-const UMBRAL_ABORTO_CUOTA = 2.30;         // antes 2.20 → deja pasar banda 2.20-2.30
-const UMBRAL_XG_24H_MIN = 2.10;           // antes 2.30 → deja pasar xG bajo
-const UMBRAL_XG_CONTRADICE = 2.60;        // sin cambio
-const UMBRAL_CASAS_MIN = 3;               // antes 4 → deja pasar poca liquidez
-const UMBRAL_CASAS_PEAJE = 5;             // sin cambio (para PROMETEDOR)
-const UMBRAL_SCORE_OVER = 55;             // antes 60 → más OVER
-const UMBRAL_PROMETEDOR_CUOTA = 2.05;     // sin cambio
+// Palancas trade-off de v4.3
+const UMBRAL_ABORTO_CUOTA = 2.30;
+const UMBRAL_XG_24H_MIN = 2.10;
+const UMBRAL_XG_CONTRADICE = 2.60;
+const UMBRAL_CASAS_MIN = 3;
+const UMBRAL_CASAS_PEAJE = 5;
+const UMBRAL_SCORE_OVER = 55;
+const UMBRAL_PROMETEDOR_CUOTA = 2.05;
 
-const UMBRAL_PRIOR_OVER_RATE_MIN = 0.25;  // antes 0.35 → deja entrar ligas 25-35%
-const UMBRAL_PRIOR_PARTIDOS_MIN = 8;      // sin cambio
-const PREFILTRO_BULK_MIN_CANDIDATOS = 3;  // sin cambio (no más agresivo)
-const PREFILTRO_BULK_CUOTA_MAX = 2.35;    // sin cambio
+const UMBRAL_PRIOR_OVER_RATE_MIN = 0.25;
+const UMBRAL_PRIOR_PARTIDOS_MIN = 8;
+const PREFILTRO_BULK_MIN_CANDIDATOS = 3;
+const PREFILTRO_BULK_CUOTA_MAX = 2.35;
 
-// ============================================================
-// v4.3: GAP 90min + ventana 6:00-23:30
-// ============================================================
-const GAP_MINIMO_MS = (0 * 60 + 90) * 60000;   // antes 115 min → más partidos/día
-const VENTANA_INICIO_MIN = 6 * 60;              // 06:00 (sin cambio)
-const VENTANA_FIN_MIN = 23 * 60 + 30;           // 23:30 (antes 23:00)
+// GAP y ventana de v4.3
+const GAP_MINIMO_MS = (0 * 60 + 90) * 60000;
+const VENTANA_INICIO_MIN = 6 * 60;
+const VENTANA_FIN_MIN = 23 * 60 + 30;
 const OBJETIVO_MENSUAL_ACTIVOS = 120;
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
@@ -154,6 +150,7 @@ function limpiarJobsPartido(matchId) {
 
 // ==================================================================
 // LIMPIEZA DE PARTIDOS OBSOLETOS
+// v4.4: los abortados ahora se cierran en Historial (no se borran sin rastro)
 // ==================================================================
 
 async function limpiarPartidosObsoletos(db) {
@@ -186,6 +183,7 @@ async function limpiarPartidosObsoletos(db) {
       razon = 'sin_apuesta+6h';
     } else if (p.estado === 'abortado' && horasDesdeInicio > 24) {
       debeEliminar = true;
+      debeCerrarEnHistorial = true;   // v4.4: antes era false
       razon = 'abortado+24h';
     }
 
@@ -433,11 +431,10 @@ function scoreOver(p) {
   const opening = p.cuotas['24h']?.lineas?.[LINEA_PRINCIPAL]?.over;
   if (!opening) return 0;
 
-  // v4.3: umbrales adaptados a la nueva banda de apertura (hasta 2.30)
   if      (opening < 1.90) score += 60;
   else if (opening < 2.05) score += 55;
   else if (opening < 2.20) score += 45;
-  else if (opening < 2.30) score += 30;   // antes esta banda puntuaba 20 (con apertura 2.20)
+  else if (opening < 2.30) score += 30;
   else if (opening < 2.40) score += 15;
   else                     return 0;
 
@@ -446,7 +443,7 @@ function scoreOver(p) {
     if      (xg >= 3.6) score += 25;
     else if (xg >= 3.2) score += 15;
     else if (xg >= 2.8) score += 5;
-    else if (xg <  2.4) score -= 20;      // v4.3: umbral de contradicción bajado a 2.4
+    else if (xg <  2.4) score -= 20;
   }
 
   const mov = (typeof p.mov35Over === 'number' && !isNaN(p.mov35Over)) ? p.mov35Over : 0;
@@ -465,7 +462,7 @@ function scoreOver(p) {
   }
 
   if (p.casas35 >= 10)      score += 5;
-  else if (p.casas35 < 3)   score -= 10;  // v4.3: umbral de liquidez bajado a 3
+  else if (p.casas35 < 3)   score -= 10;
 
   return Math.max(0, Math.min(100, score));
 }
@@ -668,6 +665,8 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
                          over24h >= UMBRAL_ABORTO_CUOTA ? `cuota ${over24h}` :
                          (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ? `xG ${xg24h}` :
                          `casas ${casas24h}`;
+          // v4.4: guardar motivo para que quede en Historial al limpiar
+          p.motivoAborto = motivo;
           await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
 
           const tiempoHueco = new Date(p.commenceTime).getTime() - GAP_MINIMO_MS;
@@ -817,6 +816,7 @@ async function ejecutarPrediccion(matchId) {
 
 // ==================================================================
 // HISTORIAL
+// v4.4: distingue ABORTADO de SIN_APUESTA, y usa motivoAborto como fallback
 // ==================================================================
 
 async function cerrarPartidoEnHistorial(p, marcador) {
@@ -835,7 +835,9 @@ async function cerrarPartidoEnHistorial(p, marcador) {
     fecha: new Date().toISOString(), horaInicioReal: p.horaInicioReal || p.commenceTime,
     liga: p.sportKey, equipoLocal: p.homeTeam, equipoVisitante: p.awayTeam,
     partido: `${p.homeTeam} vs ${p.awayTeam}`, linea: LINEA_PRINCIPAL,
-    prediccion: p.prediccion || 'SIN_APUESTA', golesTotales: golesTotales !== '' ? golesTotales : undefined,
+    // v4.4: ABORTADO en vez de SIN_APUESTA cuando aplica
+    prediccion: p.prediccion || (p.estado === 'abortado' ? 'ABORTADO' : 'SIN_APUESTA'),
+    golesTotales: golesTotales !== '' ? golesTotales : undefined,
     marcador: marcador || '', acierto, puntosUsados: p.puntosUsados,
     senalPonderada: p.senalPonderada, versionRegla: VERSION_REGLA, casas35: p.casas35,
     pinnacleOverApertura: p.pinnacleOverApertura, pinnacleOverCierre: p.pinnacleOverCierre,
@@ -843,7 +845,9 @@ async function cerrarPartidoEnHistorial(p, marcador) {
     lineaPrincipal24h: p.lineaPrincipal24h, lineaPrincipal5m: p.lineaPrincipal5m,
     deltaLineaPrincipal: p.deltaLineaPrincipal,
     pinVentaja24h: p.pinVentaja24h, pinVentaja5m: p.pinVentaja5m,
-    scoreOver: p.scoreOver, nivelPeaje: p.nivelPeaje, motivoDecision: p.motivoDecision,
+    scoreOver: p.scoreOver, nivelPeaje: p.nivelPeaje,
+    // v4.4: motivoDecision si existe, si no motivoAborto (para abortados)
+    motivoDecision: p.motivoDecision || p.motivoAborto || '',
     mov15Over: p.mov15Over, sost15Over: p.sost15Over, mov25Over: p.mov25Over, sost25Over: p.sost25Over,
     mov35Over: p.mov35Over, sost35Over: p.sost35Over, mov45Over: p.mov45Over, sost45Over: p.sost45Over,
     cuotaOverApertura: p.cuotaOverApertura, cuotaOverCierre: p.cuotaOverCierre,
