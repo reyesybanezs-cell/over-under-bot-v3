@@ -25,6 +25,9 @@ const LIGAS_PERMITIDAS = [
   'soccer_italy_serie_a', 'soccer_france_ligue_one', 'soccer_netherlands_eredivisie',
   'soccer_portugal_primeira_liga', 'soccer_brazil_campeonato', 'soccer_mexico_ligamx',
   'soccer_usa_mls', 'soccer_argentina_primera_division', 'soccer_uefa_champs_league',
+  // v4.3: nuevas ligas Over-friendly
+  'soccer_germany_bundesliga2',
+  'soccer_uefa_europa_league',
 ];
 
 // v4.1: solo 3 checkpoints (6h eliminado)
