@@ -25,12 +25,11 @@ const LIGAS_PERMITIDAS = [
   'soccer_italy_serie_a', 'soccer_france_ligue_one', 'soccer_netherlands_eredivisie',
   'soccer_portugal_primeira_liga', 'soccer_brazil_campeonato', 'soccer_mexico_ligamx',
   'soccer_usa_mls', 'soccer_argentina_primera_division', 'soccer_uefa_champs_league',
-  // v4.3: nuevas ligas Over-friendly
   'soccer_germany_bundesliga2',
   'soccer_uefa_europa_league',
 ];
 
-// v4.1: solo 3 checkpoints (6h eliminado)
+// v4.3: solo 3 checkpoints
 const CHECKPOINTS = [
   { clave: '24h', ms: 24 * 3600000 },
   { clave: '1h', ms: 1 * 3600000 },
@@ -40,7 +39,7 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.2';
+const VERSION_REGLA = 'v4.3';
 
 const UMBRAL_ABORTO_CUOTA = 2.20;
 const UMBRAL_XG_24H_MIN = 2.30;
@@ -55,9 +54,10 @@ const UMBRAL_PRIOR_PARTIDOS_MIN = 8;
 const PREFILTRO_BULK_MIN_CANDIDATOS = 3;
 const PREFILTRO_BULK_CUOTA_MAX = 2.35;
 
-const GAP_MINIMO_MS = (1 * 60 + 55) * 60000;
-const VENTANA_INICIO_MIN = 6 * 60;
-const VENTANA_FIN_MIN = 23 * 60;
+// v4.3: GAP 90 min (antes 115)
+const GAP_MINIMO_MS = 90 * 60000;
+const VENTANA_INICIO_MIN = 6 * 60;           // 06:00
+const VENTANA_FIN_MIN = 23 * 60 + 30;        // 23:30 (v4.3: antes 23:00)
 const OBJETIVO_MENSUAL_ACTIVOS = 120;
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
@@ -149,7 +149,7 @@ function limpiarJobsPartido(matchId) {
 }
 
 // ==================================================================
-// LIMPIEZA DE PARTIDOS OBSOLETOS (v4.2 — fix de partidos colgados)
+// LIMPIEZA DE PARTIDOS OBSOLETOS
 // ==================================================================
 
 async function limpiarPartidosObsoletos(db) {
@@ -166,30 +166,21 @@ async function limpiarPartidosObsoletos(db) {
     let debeCerrarEnHistorial = false;
     let razon = '';
 
-    // CASO A: en_cola cuyo partido ya empezó (server caído durante 24h)
     if (p.estado === 'en_cola' && ahora >= commenceTime) {
       debeEliminar = true;
       razon = 'en_cola+iniciado';
-    }
-    // CASO B: activo sin predicción (server caído entre 1h y 5m)
-    else if (p.estado === 'activo' && !p.prediccionEnviada && ahora >= commenceTime) {
+    } else if (p.estado === 'activo' && !p.prediccionEnviada && ahora >= commenceTime) {
       debeEliminar = true;
       razon = 'activo+sin_pred';
-    }
-    // CASO C: activo OVER sin marcador >48h → cerrar en historial
-    else if (p.estado === 'activo' && p.prediccionEnviada && p.prediccion === 'OVER' && horasDesdeInicio > 48) {
+    } else if (p.estado === 'activo' && p.prediccionEnviada && p.prediccion === 'OVER' && horasDesdeInicio > 48) {
       debeEliminar = true;
       debeCerrarEnHistorial = true;
       razon = 'over+48h';
-    }
-    // CASO D: activo SIN_APUESTA >6h → cerrar en historial
-    else if (p.estado === 'activo' && p.prediccionEnviada && p.prediccion !== 'OVER' && horasDesdeInicio > 6) {
+    } else if (p.estado === 'activo' && p.prediccionEnviada && p.prediccion !== 'OVER' && horasDesdeInicio > 6) {
       debeEliminar = true;
       debeCerrarEnHistorial = true;
       razon = 'sin_apuesta+6h';
-    }
-    // CASO E: abortado >24h → borrar
-    else if (p.estado === 'abortado' && horasDesdeInicio > 24) {
+    } else if (p.estado === 'abortado' && horasDesdeInicio > 24) {
       debeEliminar = true;
       razon = 'abortado+24h';
     }
@@ -203,7 +194,6 @@ async function limpiarPartidosObsoletos(db) {
     }
   }
 
-  // Enviar a historial los que corresponde (bloqueante para no perderlos)
   for (const p of partidosParaCerrar) {
     try {
       await cerrarPartidoEnHistorial(p, "");
@@ -555,9 +545,8 @@ async function buscarYProgramarPartidos() {
   return conBloqueoDB(async () => {
     const db = leerDB();
 
-    // v4.2: limpieza completa de obsoletos
     const { eliminados } = await limpiarPartidosObsoletos(db);
-    if (eliminados > 0) console.log(`🧹 Cleanup en búsqueda: ${eliminados} obsoletos eliminados`);
+    if (eliminados > 0) console.log(`🧹 Cleanup en búsqueda: ${eliminados} eliminados`);
 
     if (Object.values(db.partidos).some((p) => p.diaLocal === diaSeleccionado && p.estado !== 'cerrado' && p.estado !== 'abortado')) {
       return { bloqueado: true, mensaje: `Ya hay partidos en gestión para el ${diaSeleccionado}.` };
@@ -674,7 +663,7 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
                          over24h >= UMBRAL_ABORTO_CUOTA ? `cuota ${over24h}` :
                          (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ? `xG ${xg24h}` :
                          `casas ${casas24h}`;
-          await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}`);
+          await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
 
           const tiempoHueco = new Date(p.commenceTime).getTime() - GAP_MINIMO_MS;
           const nuevoEv = await buscarReemplazo(p.diaLocal, tiempoHueco, db);
@@ -684,6 +673,8 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
             db.partidos[nuevoEv.id] = nuevoP;
             programarChequeoPeaje(nuevoEv.id, nuevoP);
             await enviarTelegram(`✅ Reemplazo: ${nuevoP.homeTeam} vs ${nuevoP.awayTeam}`);
+          } else {
+            await enviarTelegram(`⚠️ Sin reemplazo disponible.`);
           }
         } else {
           const esPrometedor =
@@ -926,7 +917,6 @@ app.get('/api/priors', (req, res) => {
   res.json(PRIORS || { porLiga: {}, porEquipo: {} });
 });
 
-// v4.2: endpoint para limpieza manual
 app.post('/api/limpiar-obsoletos', async (req, res) => {
   try {
     const result = await conBloqueoDB(async () => {
@@ -949,15 +939,14 @@ app.post('/api/buscar-partidos', async (req, res) => {
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ==================================================================
-// ARRANQUE (con limpieza inicial)
+// ARRANQUE
 // ==================================================================
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Servidor v4.2 puerto ${PORT}`);
+  console.log(`🚀 Servidor v4.3 puerto ${PORT}`);
   PRIORS = await cargarPriors();
   await recuperarEstadoSiHaceFalta();
 
-  // v4.2: limpieza inicial de partidos colgados
   await conBloqueoDB(async () => {
     const db = leerDB();
     const { eliminados, cerrados } = await limpiarPartidosObsoletos(db);
