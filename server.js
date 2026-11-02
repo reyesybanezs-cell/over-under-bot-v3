@@ -29,7 +29,6 @@ const LIGAS_PERMITIDAS = [
   'soccer_uefa_europa_league',
 ];
 
-// v4.3: solo 3 checkpoints
 const CHECKPOINTS = [
   { clave: '24h', ms: 24 * 3600000 },
   { clave: '1h', ms: 1 * 3600000 },
@@ -41,23 +40,28 @@ const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7
 const LINEA_PRINCIPAL = '3.5';
 const VERSION_REGLA = 'v4.3';
 
-const UMBRAL_ABORTO_CUOTA = 2.20;
-const UMBRAL_XG_24H_MIN = 2.30;
-const UMBRAL_XG_CONTRADICE = 2.60;
-const UMBRAL_CASAS_MIN = 4;
-const UMBRAL_CASAS_PEAJE = 5;
-const UMBRAL_SCORE_OVER = 60;
-const UMBRAL_PROMETEDOR_CUOTA = 2.05;
+// ============================================================
+// v4.3: TODAS LAS PALANCAS TRADE-OFF APLICADAS
+// ============================================================
+const UMBRAL_ABORTO_CUOTA = 2.30;         // antes 2.20 → deja pasar banda 2.20-2.30
+const UMBRAL_XG_24H_MIN = 2.10;           // antes 2.30 → deja pasar xG bajo
+const UMBRAL_XG_CONTRADICE = 2.60;        // sin cambio
+const UMBRAL_CASAS_MIN = 3;               // antes 4 → deja pasar poca liquidez
+const UMBRAL_CASAS_PEAJE = 5;             // sin cambio (para PROMETEDOR)
+const UMBRAL_SCORE_OVER = 55;             // antes 60 → más OVER
+const UMBRAL_PROMETEDOR_CUOTA = 2.05;     // sin cambio
 
-const UMBRAL_PRIOR_OVER_RATE_MIN = 0.35;
-const UMBRAL_PRIOR_PARTIDOS_MIN = 8;
-const PREFILTRO_BULK_MIN_CANDIDATOS = 3;
-const PREFILTRO_BULK_CUOTA_MAX = 2.35;
+const UMBRAL_PRIOR_OVER_RATE_MIN = 0.25;  // antes 0.35 → deja entrar ligas 25-35%
+const UMBRAL_PRIOR_PARTIDOS_MIN = 8;      // sin cambio
+const PREFILTRO_BULK_MIN_CANDIDATOS = 3;  // sin cambio (no más agresivo)
+const PREFILTRO_BULK_CUOTA_MAX = 2.35;    // sin cambio
 
-// v4.3: GAP 90 min (antes 115)
-const GAP_MINIMO_MS = 90 * 60000;
-const VENTANA_INICIO_MIN = 6 * 60;           // 06:00
-const VENTANA_FIN_MIN = 23 * 60 + 30;        // 23:30 (v4.3: antes 23:00)
+// ============================================================
+// v4.3: GAP 90min + ventana 6:00-23:30
+// ============================================================
+const GAP_MINIMO_MS = (0 * 60 + 90) * 60000;   // antes 115 min → más partidos/día
+const VENTANA_INICIO_MIN = 6 * 60;              // 06:00 (sin cambio)
+const VENTANA_FIN_MIN = 23 * 60 + 30;           // 23:30 (antes 23:00)
 const OBJETIVO_MENSUAL_ACTIVOS = 120;
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
@@ -429,11 +433,12 @@ function scoreOver(p) {
   const opening = p.cuotas['24h']?.lineas?.[LINEA_PRINCIPAL]?.over;
   if (!opening) return 0;
 
+  // v4.3: umbrales adaptados a la nueva banda de apertura (hasta 2.30)
   if      (opening < 1.90) score += 60;
   else if (opening < 2.05) score += 55;
   else if (opening < 2.20) score += 45;
-  else if (opening < 2.35) score += 20;
-  else if (opening < 2.50) score += 5;
+  else if (opening < 2.30) score += 30;   // antes esta banda puntuaba 20 (con apertura 2.20)
+  else if (opening < 2.40) score += 15;
   else                     return 0;
 
   const xg = (typeof p.xgCierre === 'number' && !isNaN(p.xgCierre)) ? p.xgCierre : null;
@@ -441,7 +446,7 @@ function scoreOver(p) {
     if      (xg >= 3.6) score += 25;
     else if (xg >= 3.2) score += 15;
     else if (xg >= 2.8) score += 5;
-    else if (xg <  2.6) score -= 20;
+    else if (xg <  2.4) score -= 20;      // v4.3: umbral de contradicción bajado a 2.4
   }
 
   const mov = (typeof p.mov35Over === 'number' && !isNaN(p.mov35Over)) ? p.mov35Over : 0;
@@ -460,7 +465,7 @@ function scoreOver(p) {
   }
 
   if (p.casas35 >= 10)      score += 5;
-  else if (p.casas35 < 5)   score -= 10;
+  else if (p.casas35 < 3)   score -= 10;  // v4.3: umbral de liquidez bajado a 3
 
   return Math.max(0, Math.min(100, score));
 }
@@ -943,7 +948,7 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 // ==================================================================
 
 app.listen(PORT, async () => {
-  console.log(`🚀 Servidor v4.3 puerto ${PORT}`);
+  console.log(`🚀 Servidor ${VERSION_REGLA} puerto ${PORT}`);
   PRIORS = await cargarPriors();
   await recuperarEstadoSiHaceFalta();
 
