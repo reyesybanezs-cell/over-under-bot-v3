@@ -17,6 +17,13 @@ const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || 'cambia-e
 const GOOGLE_SHEETS_WEBHOOK_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
 const GOOGLE_SHEETS_SECRETO = process.env.GOOGLE_SHEETS_SECRETO || 'cambia-este-secreto';
 
+// v4.6: FotMob auto-fill
+const FOTMOB_ENABLED = process.env.FOTMOB_ENABLED !== 'false';
+const FOTMOB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const FOTMOB_HORAS_CRON = [0, 3, 6, 9, 12, 15, 18, 21];
+const FOTMOB_UMBRAL_HORAS_OVER = 3;
+const FOTMOB_UMBRAL_HORAS_ABORTADO = 2;
+
 const DB_PATH = path.join(__dirname, 'database.json');
 const PRIORS_LOCAL_PATH = path.join(__dirname, 'priors.json');
 
@@ -38,9 +45,8 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.4';
+const VERSION_REGLA = 'v4.6';
 
-// Palancas trade-off de v4.3
 const UMBRAL_ABORTO_CUOTA = 2.30;
 const UMBRAL_XG_24H_MIN = 2.10;
 const UMBRAL_XG_CONTRADICE = 2.60;
@@ -54,7 +60,6 @@ const UMBRAL_PRIOR_PARTIDOS_MIN = 8;
 const PREFILTRO_BULK_MIN_CANDIDATOS = 3;
 const PREFILTRO_BULK_CUOTA_MAX = 2.35;
 
-// GAP y ventana de v4.3
 const GAP_MINIMO_MS = (0 * 60 + 90) * 60000;
 const VENTANA_INICIO_MIN = 6 * 60;
 const VENTANA_FIN_MIN = 23 * 60 + 30;
@@ -149,8 +154,211 @@ function limpiarJobsPartido(matchId) {
 }
 
 // ==================================================================
+// FOTMOB — AUTO-FILL POST-PARTIDO (v4.6)
+// ==================================================================
+
+function normalizarEquipo(nombre) {
+  return String(nombre || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.']/g, '')
+    .replace(/^(fc|cf|sc|ac|as|ss|ssc|rc|cd|ud|ca)\s+/i, '')
+    .replace(/\s+(fc|cf|sc|ac|as|ss|ssc|rc|cd|ud|ca|club)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function equiposCoinciden(a, b) {
+  const na = normalizarEquipo(a);
+  const nb = normalizarEquipo(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+function fechasFotMobARevisar(isoString) {
+  const base = new Date(isoString).getTime();
+  const fechas = [];
+  for (let offset = -1; offset <= 1; offset++) {
+    const d = new Date(base + offset * 86400000);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    fechas.push(`${yyyy}${mm}${dd}`);
+  }
+  return fechas;
+}
+
+async function obtenerPartidosFotMob(fechaStr) {
+  try {
+    const res = await fetch(`https://www.fotmob.com/api/data/matches?date=${fechaStr}`, {
+      headers: {
+        'User-Agent': FOTMOB_UA,
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.fotmob.com/',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      console.warn(`⚠️ FotMob ${fechaStr}: HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    const todos = [];
+    for (const liga of data.leagues || []) {
+      for (const m of liga.matches || []) {
+        todos.push({
+          id: m.id,
+          homeNombre: m.home?.name || '',
+          awayNombre: m.away?.name || '',
+          homeScore: m.home?.score,
+          awayScore: m.away?.score,
+          timeTS: m.timeTS,
+          finished: m.status?.finished === true,
+          cancelled: m.status?.cancelled === true,
+        });
+      }
+    }
+    return todos;
+  } catch (err) {
+    console.warn(`⚠️ FotMob ${fechaStr}: ${err.message}`);
+    return [];
+  }
+}
+
+async function buscarPartidoEnFotMob(p, cacheFechas) {
+  const fechas = fechasFotMobARevisar(p.commenceTime);
+  const commenceMs = new Date(p.commenceTime).getTime();
+
+  for (const fechaStr of fechas) {
+    if (!cacheFechas[fechaStr]) {
+      cacheFechas[fechaStr] = await obtenerPartidosFotMob(fechaStr);
+      await new Promise(r => setTimeout(r, 300));
+    }
+    for (const m of cacheFechas[fechaStr]) {
+      if (!m.finished || m.cancelled) continue;
+      if (m.homeScore == null || m.awayScore == null) continue;
+      if (Math.abs(m.timeTS - commenceMs) > 6 * 3600000) continue;
+      if (equiposCoinciden(p.homeTeam, m.homeNombre) && equiposCoinciden(p.awayTeam, m.awayNombre)) {
+        return m;
+      }
+    }
+  }
+  return null;
+}
+
+// v4.6: obtiene los 6 stats post-partido desde matchDetails
+async function obtenerStatsPost(matchIdFotMob) {
+  if (!matchIdFotMob) return null;
+  try {
+    const res = await fetch(`https://www.fotmob.com/api/data/matchDetails?matchId=${matchIdFotMob}`, {
+      headers: {
+        'User-Agent': FOTMOB_UA,
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.fotmob.com/'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!res.ok) {
+      console.warn(`⚠️ matchDetails ${matchIdFotMob}: HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+
+    const topStats = data.content?.stats?.Periods?.All?.stats
+      ?.find(s => s.key === 'top_stats')?.stats || [];
+
+    const buscar = (key) => {
+      const found = topStats.find(s => s.key === key);
+      return found?.stats || [null, null];
+    };
+
+    const [xgHome, xgAway] = buscar('expected_goals');
+    const [bcHome, bcAway] = buscar('big_chance');
+    const [sotHome, sotAway] = buscar('ShotsOnTarget');
+
+    const parseNum = (v, isFloat = true) => {
+      if (v === null || v === undefined) return null;
+      const n = isFloat ? parseFloat(v) : parseInt(v);
+      return isNaN(n) ? null : n;
+    };
+
+    return {
+      xgHomePost: parseNum(xgHome),
+      xgAwayPost: parseNum(xgAway),
+      bigChancesHome: parseNum(bcHome, false),
+      bigChancesAway: parseNum(bcAway, false),
+      shotsOnTargetHome: parseNum(sotHome, false),
+      shotsOnTargetAway: parseNum(sotAway, false),
+    };
+  } catch (err) {
+    console.warn(`⚠️ matchDetails ${matchIdFotMob}: ${err.message}`);
+    return null;
+  }
+}
+
+async function autoCompletarMarcadores() {
+  if (!FOTMOB_ENABLED) {
+    console.log('⏭️ FotMob deshabilitado (FOTMOB_ENABLED=false)');
+    return { completados: 0, candidatos: 0 };
+  }
+
+  return conBloqueoDB(async () => {
+    const db = leerDB();
+    const ahora = Date.now();
+    const cacheFechas = {};
+    let completados = 0;
+    let candidatos = 0;
+
+    for (const id of Object.keys(db.partidos)) {
+      const p = db.partidos[id];
+      const commenceTime = new Date(p.commenceTime).getTime();
+      const horasDesdeInicio = (ahora - commenceTime) / 3600000;
+
+      const esCandidato =
+        (p.estado === 'activo' && p.prediccion === 'OVER' && horasDesdeInicio > FOTMOB_UMBRAL_HORAS_OVER) ||
+        (p.estado === 'abortado' && horasDesdeInicio > FOTMOB_UMBRAL_HORAS_ABORTADO);
+
+      if (!esCandidato) continue;
+      candidatos++;
+
+      const resultado = await buscarPartidoEnFotMob(p, cacheFechas);
+      if (!resultado) continue;
+
+      const marcador = `${resultado.homeScore}-${resultado.awayScore}`;
+      const goles = resultado.homeScore + resultado.awayScore;
+
+      // v4.6: extraer stats post-partido
+      const statsPost = await obtenerStatsPost(resultado.id);
+      const xgTxt = statsPost ? `xG ${statsPost.xgHomePost ?? '?'}-${statsPost.xgAwayPost ?? '?'}` : 'sin stats';
+      console.log(`⚽ FotMob: ${p.homeTeam} vs ${p.awayTeam} = ${marcador} (${xgTxt})`);
+
+      const exito = await cerrarPartidoEnHistorial(p, marcador, statsPost || {});
+      if (!exito) {
+        console.error(`❌ Falló envío a Sheets: ${p.homeTeam} vs ${p.awayTeam}`);
+        continue;
+      }
+
+      if (p.prediccion === 'OVER') {
+        const res = goles > 3.5 ? '🎉 ¡Acertaste!' : '❌ Fallo.';
+        await enviarTelegram(`✅ Auto-registrado (FotMob): ${marcador} (${goles} goles). ${res}\n⚽ ${p.homeTeam} vs ${p.awayTeam}`);
+      }
+
+      p.estado = 'cerrado';
+      limpiarJobsPartido(id);
+      delete db.partidos[id];
+      completados++;
+    }
+
+    if (completados > 0) guardarDB(db);
+    console.log(`🔍 FotMob auto-fill: ${completados}/${candidatos} completados`);
+    return { completados, candidatos };
+  });
+}
+
+// ==================================================================
 // LIMPIEZA DE PARTIDOS OBSOLETOS
-// v4.4: los abortados ahora se cierran en Historial (no se borran sin rastro)
 // ==================================================================
 
 async function limpiarPartidosObsoletos(db) {
@@ -183,7 +391,7 @@ async function limpiarPartidosObsoletos(db) {
       razon = 'sin_apuesta+6h';
     } else if (p.estado === 'abortado' && horasDesdeInicio > 24) {
       debeEliminar = true;
-      debeCerrarEnHistorial = true;   // v4.4: antes era false
+      debeCerrarEnHistorial = true;
       razon = 'abortado+24h';
     }
 
@@ -665,7 +873,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
                          over24h >= UMBRAL_ABORTO_CUOTA ? `cuota ${over24h}` :
                          (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ? `xG ${xg24h}` :
                          `casas ${casas24h}`;
-          // v4.4: guardar motivo para que quede en Historial al limpiar
           p.motivoAborto = motivo;
           await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
 
@@ -815,11 +1022,10 @@ async function ejecutarPrediccion(matchId) {
 }
 
 // ==================================================================
-// HISTORIAL
-// v4.4: distingue ABORTADO de SIN_APUESTA, y usa motivoAborto como fallback
+// HISTORIAL — v4.6: acepta statsExtra para los 6 campos post-partido
 // ==================================================================
 
-async function cerrarPartidoEnHistorial(p, marcador) {
+async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
   let golesTotales = '';
   let acierto = null;
 
@@ -835,7 +1041,6 @@ async function cerrarPartidoEnHistorial(p, marcador) {
     fecha: new Date().toISOString(), horaInicioReal: p.horaInicioReal || p.commenceTime,
     liga: p.sportKey, equipoLocal: p.homeTeam, equipoVisitante: p.awayTeam,
     partido: `${p.homeTeam} vs ${p.awayTeam}`, linea: LINEA_PRINCIPAL,
-    // v4.4: ABORTADO en vez de SIN_APUESTA cuando aplica
     prediccion: p.prediccion || (p.estado === 'abortado' ? 'ABORTADO' : 'SIN_APUESTA'),
     golesTotales: golesTotales !== '' ? golesTotales : undefined,
     marcador: marcador || '', acierto, puntosUsados: p.puntosUsados,
@@ -846,12 +1051,18 @@ async function cerrarPartidoEnHistorial(p, marcador) {
     deltaLineaPrincipal: p.deltaLineaPrincipal,
     pinVentaja24h: p.pinVentaja24h, pinVentaja5m: p.pinVentaja5m,
     scoreOver: p.scoreOver, nivelPeaje: p.nivelPeaje,
-    // v4.4: motivoDecision si existe, si no motivoAborto (para abortados)
     motivoDecision: p.motivoDecision || p.motivoAborto || '',
     mov15Over: p.mov15Over, sost15Over: p.sost15Over, mov25Over: p.mov25Over, sost25Over: p.sost25Over,
     mov35Over: p.mov35Over, sost35Over: p.sost35Over, mov45Over: p.mov45Over, sost45Over: p.sost45Over,
     cuotaOverApertura: p.cuotaOverApertura, cuotaOverCierre: p.cuotaOverCierre,
     cuotaUnderApertura: p.cuotaUnderApertura, cuotaUnderCierre: p.cuotaUnderCierre,
+    // v4.6: stats post-partido (se envían undefined si no están disponibles → Apps Script los deja en '')
+    xgHomePost: statsExtra?.xgHomePost,
+    xgAwayPost: statsExtra?.xgAwayPost,
+    bigChancesHome: statsExtra?.bigChancesHome,
+    bigChancesAway: statsExtra?.bigChancesAway,
+    shotsOnTargetHome: statsExtra?.shotsOnTargetHome,
+    shotsOnTargetAway: statsExtra?.shotsOnTargetAway,
   });
 }
 
@@ -860,10 +1071,14 @@ async function enviarSolicitudMarcador(matchId) {
     const db = leerDB();
     const p = db.partidos[matchId];
     if (!p || p.mensajeMarcadorId || p.estado !== 'activo' || p.prediccion !== 'OVER') return;
-    const msgId = await enviarTelegram(`⚽ ¿Marcador final de ${p.homeTeam} vs ${p.awayTeam}? Respondé (ej: 2-1).`);
+    const msgId = await enviarTelegram(`⚽ ¿Marcador final de ${p.homeTeam} vs ${p.awayTeam}? Respondé (ej: 2-1). También podés esperar el auto-registro de FotMob (max 6h).`);
     if (msgId) { p.mensajeMarcadorId = msgId; guardarDB(db); }
   });
 }
+
+// ==================================================================
+// WEBHOOK TELEGRAM — v4.6: también intenta traer stats de FotMob
+// ==================================================================
 
 app.post('/api/telegram-webhook/:secret', async (req, res) => {
   if (req.params.secret !== TELEGRAM_WEBHOOK_SECRET) return res.sendStatus(403);
@@ -883,11 +1098,31 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
 
     const mFinal = `${regex[1]}-${regex[2]}`;
     const goles = parseInt(regex[1]) + parseInt(regex[2]);
-    const exito = await cerrarPartidoEnHistorial(p, mFinal);
+
+    // v4.6: best-effort — intentar traer stats de FotMob antes de cerrar
+    // Si falla o FotMob aún no marcó el partido como terminado, se cierra sin stats
+    let statsExtra = {};
+    if (FOTMOB_ENABLED) {
+      try {
+        const cacheFechas = {};
+        const resultado = await buscarPartidoEnFotMob(p, cacheFechas);
+        if (resultado) {
+          const stats = await obtenerStatsPost(resultado.id);
+          if (stats) statsExtra = stats;
+        }
+      } catch (err) {
+        console.warn(`⚠️ Stats post en webhook falló: ${err.message}`);
+      }
+    }
+
+    const exito = await cerrarPartidoEnHistorial(p, mFinal, statsExtra);
 
     if (exito) {
       const result = goles > 3.5 ? '🎉 ¡Acertaste!' : '❌ Fallo.';
-      await enviarTelegram(`✅ Registrado: ${mFinal} (${goles} goles). ${result}`);
+      const statsTxt = statsExtra.xgHomePost != null
+        ? `\n📊 xG: ${statsExtra.xgHomePost}-${statsExtra.xgAwayPost}`
+        : '';
+      await enviarTelegram(`✅ Registrado: ${mFinal} (${goles} goles). ${result}${statsTxt}`);
       p.estado = 'cerrado';
       limpiarJobsPartido(matchId);
       delete db.partidos[matchId];
@@ -940,6 +1175,16 @@ app.post('/api/limpiar-obsoletos', async (req, res) => {
   }
 });
 
+// v4.6: endpoint para forzar FotMob manualmente
+app.post('/api/autocompletar', async (req, res) => {
+  try {
+    const result = await autoCompletarMarcadores();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/buscar-partidos', async (req, res) => {
   try { res.json(await buscarYProgramarPartidos()); }
   catch (err) { res.status(500).json({ ok: false }); }
@@ -953,6 +1198,8 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor ${VERSION_REGLA} puerto ${PORT}`);
+  console.log(`📡 FotMob ${FOTMOB_ENABLED ? 'habilitado' : 'deshabilitado'}`);
+
   PRIORS = await cargarPriors();
   await recuperarEstadoSiHaceFalta();
 
@@ -996,9 +1243,19 @@ app.listen(PORT, async () => {
   });
 
   const [h, m] = HORA_BUSQUEDA_DIARIA.split(':');
-  const regla = new schedule.RecurrenceRule();
-  regla.tz = ZONA_HORARIA; regla.hour = parseInt(h); regla.minute = parseInt(m);
-  schedule.scheduleJob(regla, buscarYProgramarPartidos);
+  const reglaBusqueda = new schedule.RecurrenceRule();
+  reglaBusqueda.tz = ZONA_HORARIA; reglaBusqueda.hour = parseInt(h); reglaBusqueda.minute = parseInt(m);
+  schedule.scheduleJob(reglaBusqueda, buscarYProgramarPartidos);
+
+  // v4.6: cron FotMob cada 3h (:15)
+  if (FOTMOB_ENABLED) {
+    const reglaFotMob = new schedule.RecurrenceRule();
+    reglaFotMob.tz = ZONA_HORARIA;
+    reglaFotMob.hour = FOTMOB_HORAS_CRON;
+    reglaFotMob.minute = 15;
+    schedule.scheduleJob(reglaFotMob, autoCompletarMarcadores);
+    console.log(`⏰ FotMob cron: ${FOTMOB_HORAS_CRON.map(h => `${h}:15`).join(', ')} (${ZONA_HORARIA})`);
+  }
 
   configurarWebhookTelegram();
 });
