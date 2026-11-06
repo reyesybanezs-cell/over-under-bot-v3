@@ -17,7 +17,7 @@ const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || 'cambia-e
 const GOOGLE_SHEETS_WEBHOOK_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
 const GOOGLE_SHEETS_SECRETO = process.env.GOOGLE_SHEETS_SECRETO || 'cambia-este-secreto';
 
-// v4.6: FotMob auto-fill
+// FotMob auto-fill
 const FOTMOB_ENABLED = process.env.FOTMOB_ENABLED !== 'false';
 const FOTMOB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const FOTMOB_HORAS_CRON = [0, 3, 6, 9, 12, 15, 18, 21];
@@ -45,7 +45,7 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.6';
+const VERSION_REGLA = 'v4.8';
 
 const UMBRAL_ABORTO_CUOTA = 2.30;
 const UMBRAL_XG_24H_MIN = 2.10;
@@ -64,6 +64,13 @@ const GAP_MINIMO_MS = (0 * 60 + 60) * 60000;
 const VENTANA_INICIO_MIN = 6 * 60;
 const VENTANA_FIN_MIN = 23 * 60 + 30;
 const OBJETIVO_MENSUAL_ACTIVOS = 120;
+
+// C1: si fallan 3 intentos de API, abortar en vez de quedar colgado
+const INTENTOS_API_MAX = 3;
+const ESPERA_REINTENTO_MS = 30000;
+
+// C5: reemplazos hasta T-6h (antes era T-24h)
+const VENTANA_REEMPLAZO_MS = 6 * 3600000;
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
 const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
@@ -154,7 +161,7 @@ function limpiarJobsPartido(matchId) {
 }
 
 // ==================================================================
-// FOTMOB — AUTO-FILL POST-PARTIDO (v4.6)
+// FOTMOB
 // ==================================================================
 
 function normalizarEquipo(nombre) {
@@ -247,7 +254,7 @@ async function buscarPartidoEnFotMob(p, cacheFechas) {
   return null;
 }
 
-// v4.6: obtiene los 6 stats post-partido desde matchDetails
+// B2 + B4: extraer stats post-partido + tarjetas rojas + minuto + log coverageLevel
 async function obtenerStatsPost(matchIdFotMob) {
   if (!matchIdFotMob) return null;
   try {
@@ -265,6 +272,10 @@ async function obtenerStatsPost(matchIdFotMob) {
       return null;
     }
     const data = await res.json();
+
+    // B4: log de coverageLevel para saber qué % de partidos tiene stats
+    const coverageLevel = data.general?.coverageLevel || 'desconocido';
+    console.log(`📊 matchDetails ${matchIdFotMob}: coverageLevel=${coverageLevel}`);
 
     const topStats = data.content?.stats?.Periods?.All?.stats
       ?.find(s => s.key === 'top_stats')?.stats || [];
@@ -284,6 +295,31 @@ async function obtenerStatsPost(matchIdFotMob) {
       return isNaN(n) ? null : n;
     };
 
+    // B2: extraer tarjetas rojas del header.status
+    const status = data.header?.status || {};
+    const redCardsHome = status.numberOfHomeRedCards ?? 0;
+    const redCardsAway = status.numberOfAwayRedCards ?? 0;
+
+    // B2: buscar el minuto de la primera roja de cada equipo en los eventos
+    const eventos = data.content?.matchFacts?.events?.events || [];
+    const rojasHome = eventos.filter(e =>
+      e.type === 'Card' &&
+      (e.card === 'Red' || e.card === 'YellowRed') &&
+      e.isHome === true
+    );
+    const rojasAway = eventos.filter(e =>
+      e.type === 'Card' &&
+      (e.card === 'Red' || e.card === 'YellowRed') &&
+      e.isHome === false
+    );
+
+    const minutoRojaHome = rojasHome.length > 0
+      ? Math.min(...rojasHome.map(r => parseInt(r.timeStr) || 90))
+      : null;
+    const minutoRojaAway = rojasAway.length > 0
+      ? Math.min(...rojasAway.map(r => parseInt(r.timeStr) || 90))
+      : null;
+
     return {
       xgHomePost: parseNum(xgHome),
       xgAwayPost: parseNum(xgAway),
@@ -291,6 +327,11 @@ async function obtenerStatsPost(matchIdFotMob) {
       bigChancesAway: parseNum(bcAway, false),
       shotsOnTargetHome: parseNum(sotHome, false),
       shotsOnTargetAway: parseNum(sotAway, false),
+      // B2
+      redCardsHome,
+      redCardsAway,
+      minutoRojaHome,
+      minutoRojaAway,
     };
   } catch (err) {
     console.warn(`⚠️ matchDetails ${matchIdFotMob}: ${err.message}`);
@@ -324,15 +365,21 @@ async function autoCompletarMarcadores() {
       candidatos++;
 
       const resultado = await buscarPartidoEnFotMob(p, cacheFechas);
-      if (!resultado) continue;
+      if (!resultado) {
+        // B3: log de partidos no encontrados
+        console.log(`🔍 Sin match FotMob: ${p.homeTeam} vs ${p.awayTeam} (${p.commenceTime})`);
+        continue;
+      }
 
       const marcador = `${resultado.homeScore}-${resultado.awayScore}`;
       const goles = resultado.homeScore + resultado.awayScore;
 
-      // v4.6: extraer stats post-partido
       const statsPost = await obtenerStatsPost(resultado.id);
       const xgTxt = statsPost ? `xG ${statsPost.xgHomePost ?? '?'}-${statsPost.xgAwayPost ?? '?'}` : 'sin stats';
-      console.log(`⚽ FotMob: ${p.homeTeam} vs ${p.awayTeam} = ${marcador} (${xgTxt})`);
+      const rojaTxt = statsPost && (statsPost.redCardsHome > 0 || statsPost.redCardsAway > 0)
+        ? ` | 🟥 ${statsPost.redCardsHome}-${statsPost.redCardsAway}`
+        : '';
+      console.log(`⚽ FotMob: ${p.homeTeam} vs ${p.awayTeam} = ${marcador} (${xgTxt}${rojaTxt})`);
 
       const exito = await cerrarPartidoEnHistorial(p, marcador, statsPost || {});
       if (!exito) {
@@ -355,6 +402,88 @@ async function autoCompletarMarcadores() {
     console.log(`🔍 FotMob auto-fill: ${completados}/${candidatos} completados`);
     return { completados, candidatos };
   });
+}
+
+// C3: backfill de filas viejas con marcador vacío en Sheets
+async function backfillHistorial() {
+  if (!FOTMOB_ENABLED || !GOOGLE_SHEETS_WEBHOOK_URL) {
+    return { rellenados: 0, candidatos: 0 };
+  }
+
+  try {
+    // 1. Traer historial de Sheets
+    const res = await fetch(`${GOOGLE_SHEETS_WEBHOOK_URL}?secreto=${encodeURIComponent(GOOGLE_SHEETS_SECRETO)}`);
+    const data = await res.json();
+    if (!data.ok || !Array.isArray(data.historial)) {
+      console.log('⏭️ Backfill: sin historial para procesar');
+      return { rellenados: 0, candidatos: 0 };
+    }
+
+    // 2. Filtrar filas con marcador vacío (o '')
+    const filasVacias = data.historial.filter(h => {
+      const marcadorVacio = !h.marcador || String(h.marcador).trim() === '';
+      const partidoEmpezado = h.horaInicioReal && (Date.now() - new Date(h.horaInicioReal).getTime() > 2 * 3600000);
+      const noMuyViejo = h.horaInicioReal && (Date.now() - new Date(h.horaInicioReal).getTime() < 30 * 86400000);
+      return marcadorVacio && partidoEmpezado && noMuyViejo;
+    });
+
+    if (filasVacias.length === 0) {
+      console.log('⏭️ Backfill: 0 filas pendientes');
+      return { rellenados: 0, candidatos: 0 };
+    }
+
+    console.log(`🔍 Backfill: ${filasVacias.length} filas con marcador vacío`);
+
+    const cacheFechas = {};
+    let rellenados = 0;
+
+    for (const h of filasVacias) {
+      const pseudo = {
+        homeTeam: h.equipoLocal,
+        awayTeam: h.equipoVisitante,
+        commenceTime: h.horaInicioReal
+      };
+      const resultado = await buscarPartidoEnFotMob(pseudo, cacheFechas);
+      if (!resultado) {
+        console.log(`🔍 Backfill sin match: ${h.equipoLocal} vs ${h.equipoVisitante}`);
+        continue;
+      }
+
+      const marcador = `${resultado.homeScore}-${resultado.awayScore}`;
+      const goles = resultado.homeScore + resultado.awayScore;
+      const statsPost = await obtenerStatsPost(resultado.id) || {};
+
+      const exito = await enviarASheets({
+        tipo: 'actualizar-historial',
+        partido: h.partido,
+        horaInicioReal: h.horaInicioReal,
+        marcador,
+        golesTotales: goles,
+        xgHomePost: statsPost.xgHomePost,
+        xgAwayPost: statsPost.xgAwayPost,
+        bigChancesHome: statsPost.bigChancesHome,
+        bigChancesAway: statsPost.bigChancesAway,
+        shotsOnTargetHome: statsPost.shotsOnTargetHome,
+        shotsOnTargetAway: statsPost.shotsOnTargetAway,
+        redCardsHome: statsPost.redCardsHome,
+        redCardsAway: statsPost.redCardsAway,
+        minutoRojaHome: statsPost.minutoRojaHome,
+        minutoRojaAway: statsPost.minutoRojaAway,
+      });
+
+      if (exito) {
+        console.log(`✅ Backfill actualizado: ${h.partido} = ${marcador}`);
+        rellenados++;
+      }
+    }
+
+    console.log(`🔍 Backfill: ${rellenados}/${filasVacias.length} rellenados`);
+    return { rellenados, candidatos: filasVacias.length };
+
+  } catch (err) {
+    console.error(`❌ Backfill error: ${err.message}`);
+    return { rellenados: 0, candidatos: 0, error: err.message };
+  }
 }
 
 // ==================================================================
@@ -419,6 +548,7 @@ async function limpiarPartidosObsoletos(db) {
 // COMUNICACIÓN EXTERNA
 // ==================================================================
 
+// A3: log del error cuando Sheets falla
 async function enviarASheets(payload) {
   if (!GOOGLE_SHEETS_WEBHOOK_URL) return false;
   try {
@@ -428,8 +558,12 @@ async function enviarASheets(payload) {
       body: JSON.stringify({ secreto: GOOGLE_SHEETS_SECRETO, ...payload }),
     });
     const data = await res.json();
+    if (!data.ok) {
+      console.error(`❌ Sheets: ${data.error || 'sin detalle'} | tipo=${payload.tipo || 'historial'} | ${payload.partido || ''}`);
+    }
     return data.ok;
   } catch (err) {
+    console.error(`❌ Sheets fetch error: ${err.message} | tipo=${payload.tipo || 'historial'}`);
     return false;
   }
 }
@@ -801,6 +935,7 @@ function programarChequeoPeaje(matchId, partido) {
   }
 }
 
+// C5: reemplazos hasta T-6h en vez de T-24h
 async function buscarReemplazo(diaLocal, tiempoLibreMs, db) {
   const candidatos = db.calendarioDia || [];
   const partidosVivos = Object.values(db.partidos).filter(p => p.estado === 'activo' || p.estado === 'en_cola');
@@ -809,7 +944,7 @@ async function buscarReemplazo(diaLocal, tiempoLibreMs, db) {
     if (db.partidos[ev.id]) continue;
     const t = new Date(ev.commence_time).getTime();
     if (t < tiempoLibreMs) continue;
-    if (t - Date.now() < 24 * 3600000) continue;
+    if (t - Date.now() < VENTANA_REEMPLAZO_MS) continue;
     const solapa = partidosVivos.some(pv => Math.abs(t - new Date(pv.commenceTime).getTime()) < GAP_MINIMO_MS);
     if (!solapa) return ev;
   }
@@ -825,95 +960,120 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
   if (!pInicial || pInicial.estado === 'abortado' || pInicial.estado === 'cerrado') return;
 
   let datos = null;
-  for (let i = 1; i <= 3; i++) {
+  let ultimoError = null;
+  for (let i = 1; i <= INTENTOS_API_MAX; i++) {
     datos = await obtenerCuotasTotales(pInicial.sportKey, pInicial.id, cpClave);
     if (datos) break;
-    await new Promise(r => setTimeout(r, 30000));
+    ultimoError = `intento ${i}/${INTENTOS_API_MAX} falló`;
+    if (i < INTENTOS_API_MAX) await new Promise(r => setTimeout(r, ESPERA_REINTENTO_MS));
   }
 
-  if (datos) {
-    enviarASheets({
-      tipo: 'chequeo', fechaCaptura: new Date().toISOString(),
-      partidoId: pInicial.id, partido: `${pInicial.homeTeam} vs ${pInicial.awayTeam}`,
-      chequeo: cpClave, horaInicioApi: datos.horaInicioApi,
-      creditosRestantes: datos.creditosRestantes, cantidadCasas: datos.cantidadCasas
-    }).catch(() => {});
-
-    if (datos.filasCrudas.length > 0) {
-      enviarASheets({ tipo: 'crudo', filasCrudas: datos.filasCrudas }).catch(() => {});
-    }
-
+  // C1: si fallaron todos los intentos, abortar con motivo
+  if (!datos) {
+    console.warn(`⚠️ ${cpClave} falló ${INTENTOS_API_MAX}x para ${pInicial.homeTeam} vs ${pInicial.awayTeam}`);
     await conBloqueoDB(async () => {
       const db = leerDB();
       const p = db.partidos[matchId];
-      if (!p || p.estado === 'abortado') return;
-
-      p.cuotas[cpClave] = {
-        lineas: datos.lineas, pinnacle35: datos.pinnacle35,
-        casas35: datos.cantidadCasas, horaInicioReal: datos.horaInicioApi,
-        recuperadoTarde
-      };
+      if (!p || p.estado === 'abortado' || p.estado === 'cerrado') return;
 
       if (cpClave === '24h') {
-        const over24h = p.cuotas['24h'].lineas[LINEA_PRINCIPAL]?.over;
-        const xg24h = calcularXGPoisson(p.cuotas['24h'].lineas);
-        const casas24h = datos.cantidadCasas;
-
-        const esDescarte =
-          !over24h ||
-          over24h >= UMBRAL_ABORTO_CUOTA ||
-          (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ||
-          casas24h < UMBRAL_CASAS_MIN;
-
-        if (esDescarte) {
-          p.estado = 'abortado';
-          p.nivelPeaje = 'DESCARTE';
-          limpiarJobsPartido(matchId);
-          const motivo = !over24h ? 'sin cuota' :
-                         over24h >= UMBRAL_ABORTO_CUOTA ? `cuota ${over24h}` :
-                         (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ? `xG ${xg24h}` :
-                         `casas ${casas24h}`;
-          p.motivoAborto = motivo;
-          await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
-
-          const tiempoHueco = new Date(p.commenceTime).getTime() - GAP_MINIMO_MS;
-          const nuevoEv = await buscarReemplazo(p.diaLocal, tiempoHueco, db);
-          if (nuevoEv) {
-            const numActuales = Object.keys(db.partidos).length;
-            const nuevoP = crearRegistroPartido(nuevoEv, p.diaLocal, `R${numActuales}`);
-            db.partidos[nuevoEv.id] = nuevoP;
-            programarChequeoPeaje(nuevoEv.id, nuevoP);
-            await enviarTelegram(`✅ Reemplazo: ${nuevoP.homeTeam} vs ${nuevoP.awayTeam}`);
-          } else {
-            await enviarTelegram(`⚠️ Sin reemplazo disponible.`);
-          }
-        } else {
-          const esPrometedor =
-            over24h < UMBRAL_PROMETEDOR_CUOTA &&
-            (typeof xg24h === 'number' && xg24h >= 3.20) &&
-            casas24h >= UMBRAL_CASAS_PEAJE;
-
-          p.estado = 'activo';
-          p.nivelPeaje = esPrometedor ? 'PROMETEDOR' : 'CANDIDATO';
-          db.contadorMes.activos += 1;
-
-          const emoji = esPrometedor ? '🌟' : '🟢';
-          const xgTxt = typeof xg24h === 'number' ? xg24h : 'N/A';
-          await enviarTelegram(`${emoji} ${p.nivelPeaje} (cuota ${over24h}, xG ${xgTxt}, casas ${casas24h})\n⚽ ${p.homeTeam} vs ${p.awayTeam}`);
-
-          const tiempoInicio = new Date(p.commenceTime).getTime();
-          ['1h', '5m'].forEach(cpFuturo => {
-            const msCp = CHECKPOINTS.find(c => c.clave === cpFuturo).ms;
-            const msEjec = tiempoInicio - msCp;
-            if (msEjec > Date.now()) {
-              trabajosActivos[`${matchId}_${cpFuturo}`] = schedule.scheduleJob(new Date(msEjec), () => ejecutarChequeo(matchId, cpFuturo, false));
-            }
-          });
-        }
+        // Si falla el peaje, el partido no puede seguir → abortar
+        p.estado = 'abortado';
+        p.nivelPeaje = 'DESCARTE';
+        p.motivoAborto = `api_fallo_${INTENTOS_API_MAX}intentos`;
+        limpiarJobsPartido(matchId);
+        await enviarTelegram(`❌ ${p.homeTeam} vs ${p.awayTeam}\nAPI falló ${INTENTOS_API_MAX} veces. Partido abortado.`);
+      } else {
+        // Si falla 1h o 5m, dejar que el siguiente cron de cleanup lo cierre
+        p.motivoDecision = `api_fallo_${cpClave}`;
       }
       guardarDB(db);
     });
+    return;
   }
+
+  // Éxito: continuar con el flujo normal
+  enviarASheets({
+    tipo: 'chequeo', fechaCaptura: new Date().toISOString(),
+    partidoId: pInicial.id, partido: `${pInicial.homeTeam} vs ${pInicial.awayTeam}`,
+    chequeo: cpClave, horaInicioApi: datos.horaInicioApi,
+    creditosRestantes: datos.creditosRestantes, cantidadCasas: datos.cantidadCasas
+  }).catch(() => {});
+
+  if (datos.filasCrudas.length > 0) {
+    enviarASheets({ tipo: 'crudo', filasCrudas: datos.filasCrudas }).catch(() => {});
+  }
+
+  await conBloqueoDB(async () => {
+    const db = leerDB();
+    const p = db.partidos[matchId];
+    if (!p || p.estado === 'abortado') return;
+
+    p.cuotas[cpClave] = {
+      lineas: datos.lineas, pinnacle35: datos.pinnacle35,
+      casas35: datos.cantidadCasas, horaInicioReal: datos.horaInicioApi,
+      recuperadoTarde
+    };
+
+    if (cpClave === '24h') {
+      const over24h = p.cuotas['24h'].lineas[LINEA_PRINCIPAL]?.over;
+      const xg24h = calcularXGPoisson(p.cuotas['24h'].lineas);
+      const casas24h = datos.cantidadCasas;
+
+      const esDescarte =
+        !over24h ||
+        over24h >= UMBRAL_ABORTO_CUOTA ||
+        (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ||
+        casas24h < UMBRAL_CASAS_MIN;
+
+      if (esDescarte) {
+        p.estado = 'abortado';
+        p.nivelPeaje = 'DESCARTE';
+        limpiarJobsPartido(matchId);
+        const motivo = !over24h ? 'sin cuota' :
+                       over24h >= UMBRAL_ABORTO_CUOTA ? `cuota ${over24h}` :
+                       (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ? `xG ${xg24h}` :
+                       `casas ${casas24h}`;
+        p.motivoAborto = motivo;
+        await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
+
+        const tiempoHueco = new Date(p.commenceTime).getTime() - GAP_MINIMO_MS;
+        const nuevoEv = await buscarReemplazo(p.diaLocal, tiempoHueco, db);
+        if (nuevoEv) {
+          const numActuales = Object.keys(db.partidos).length;
+          const nuevoP = crearRegistroPartido(nuevoEv, p.diaLocal, `R${numActuales}`);
+          db.partidos[nuevoEv.id] = nuevoP;
+          programarChequeoPeaje(nuevoEv.id, nuevoP);
+          await enviarTelegram(`✅ Reemplazo: ${nuevoP.homeTeam} vs ${nuevoP.awayTeam}`);
+        } else {
+          await enviarTelegram(`⚠️ Sin reemplazo disponible.`);
+        }
+      } else {
+        const esPrometedor =
+          over24h < UMBRAL_PROMETEDOR_CUOTA &&
+          (typeof xg24h === 'number' && xg24h >= 3.20) &&
+          casas24h >= UMBRAL_CASAS_PEAJE;
+
+        p.estado = 'activo';
+        p.nivelPeaje = esPrometedor ? 'PROMETEDOR' : 'CANDIDATO';
+        db.contadorMes.activos += 1;
+
+        const emoji = esPrometedor ? '🌟' : '🟢';
+        const xgTxt = typeof xg24h === 'number' ? xg24h : 'N/A';
+        await enviarTelegram(`${emoji} ${p.nivelPeaje} (cuota ${over24h}, xG ${xgTxt}, casas ${casas24h})\n⚽ ${p.homeTeam} vs ${p.awayTeam}`);
+
+        const tiempoInicio = new Date(p.commenceTime).getTime();
+        ['1h', '5m'].forEach(cpFuturo => {
+          const msCp = CHECKPOINTS.find(c => c.clave === cpFuturo).ms;
+          const msEjec = tiempoInicio - msCp;
+          if (msEjec > Date.now()) {
+            trabajosActivos[`${matchId}_${cpFuturo}`] = schedule.scheduleJob(new Date(msEjec), () => ejecutarChequeo(matchId, cpFuturo, false));
+          }
+        });
+      }
+    }
+    guardarDB(db);
+  });
 
   if (cpClave === '5m' && pInicial.estado === 'activo') await ejecutarPrediccion(matchId);
 }
@@ -1022,7 +1182,7 @@ async function ejecutarPrediccion(matchId) {
 }
 
 // ==================================================================
-// HISTORIAL — v4.6: acepta statsExtra para los 6 campos post-partido
+// HISTORIAL — A1: fallback a cuotas['24h'] para abortados
 // ==================================================================
 
 async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
@@ -1037,32 +1197,71 @@ async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
     }
   }
 
+  // A1: fallback para abortados que nunca llegaron al 5m
+  const cuota24h = p.cuotas?.['24h']?.lineas?.[LINEA_PRINCIPAL];
+  const cuotaOverApertura = (typeof p.cuotaOverApertura === 'number' && !isNaN(p.cuotaOverApertura))
+    ? p.cuotaOverApertura
+    : (cuota24h?.over ?? undefined);
+  const cuotaUnderApertura = (typeof p.cuotaUnderApertura === 'number' && !isNaN(p.cuotaUnderApertura))
+    ? p.cuotaUnderApertura
+    : (cuota24h?.under ?? undefined);
+  const casas35 = (typeof p.casas35 === 'number' && !isNaN(p.casas35))
+    ? p.casas35
+    : (p.cuotas?.['24h']?.casas35 ?? undefined);
+  const pinnacleOverApertura = (typeof p.pinnacleOverApertura === 'number' && !isNaN(p.pinnacleOverApertura))
+    ? p.pinnacleOverApertura
+    : (p.cuotas?.['24h']?.pinnacle35?.over ?? undefined);
+  const xgApertura = (typeof p.xgApertura === 'number' && !isNaN(p.xgApertura))
+    ? p.xgApertura
+    : (p.cuotas?.['24h']?.lineas ? calcularXGPoisson(p.cuotas['24h'].lineas) : undefined);
+
   return await enviarASheets({
-    fecha: new Date().toISOString(), horaInicioReal: p.horaInicioReal || p.commenceTime,
-    liga: p.sportKey, equipoLocal: p.homeTeam, equipoVisitante: p.awayTeam,
-    partido: `${p.homeTeam} vs ${p.awayTeam}`, linea: LINEA_PRINCIPAL,
+    fecha: new Date().toISOString(),
+    horaInicioReal: p.horaInicioReal || p.commenceTime,
+    liga: p.sportKey,
+    equipoLocal: p.homeTeam,
+    equipoVisitante: p.awayTeam,
+    partido: `${p.homeTeam} vs ${p.awayTeam}`,
+    linea: LINEA_PRINCIPAL,
     prediccion: p.prediccion || (p.estado === 'abortado' ? 'ABORTADO' : 'SIN_APUESTA'),
     golesTotales: golesTotales !== '' ? golesTotales : undefined,
-    marcador: marcador || '', acierto, puntosUsados: p.puntosUsados,
-    senalPonderada: p.senalPonderada, versionRegla: VERSION_REGLA, casas35: p.casas35,
-    pinnacleOverApertura: p.pinnacleOverApertura, pinnacleOverCierre: p.pinnacleOverCierre,
-    xgApertura: p.xgApertura, xgCierre: p.xgCierre, recuperadoTarde: p.recuperadoTarde,
-    lineaPrincipal24h: p.lineaPrincipal24h, lineaPrincipal5m: p.lineaPrincipal5m,
+    marcador: marcador || '',
+    acierto,
+    puntosUsados: p.puntosUsados,
+    senalPonderada: p.senalPonderada,
+    versionRegla: VERSION_REGLA,
+    casas35,
+    pinnacleOverApertura,
+    pinnacleOverCierre: p.pinnacleOverCierre,
+    xgApertura,
+    xgCierre: p.xgCierre,
+    recuperadoTarde: p.recuperadoTarde,
+    lineaPrincipal24h: p.lineaPrincipal24h,
+    lineaPrincipal5m: p.lineaPrincipal5m,
     deltaLineaPrincipal: p.deltaLineaPrincipal,
-    pinVentaja24h: p.pinVentaja24h, pinVentaja5m: p.pinVentaja5m,
-    scoreOver: p.scoreOver, nivelPeaje: p.nivelPeaje,
+    pinVentaja24h: p.pinVentaja24h,
+    pinVentaja5m: p.pinVentaja5m,
+    scoreOver: p.scoreOver,
+    nivelPeaje: p.nivelPeaje,
     motivoDecision: p.motivoDecision || p.motivoAborto || '',
-    mov15Over: p.mov15Over, sost15Over: p.sost15Over, mov25Over: p.mov25Over, sost25Over: p.sost25Over,
-    mov35Over: p.mov35Over, sost35Over: p.sost35Over, mov45Over: p.mov45Over, sost45Over: p.sost45Over,
-    cuotaOverApertura: p.cuotaOverApertura, cuotaOverCierre: p.cuotaOverCierre,
-    cuotaUnderApertura: p.cuotaUnderApertura, cuotaUnderCierre: p.cuotaUnderCierre,
-    // v4.6: stats post-partido (se envían undefined si no están disponibles → Apps Script los deja en '')
+    mov15Over: p.mov15Over, sost15Over: p.sost15Over,
+    mov25Over: p.mov25Over, sost25Over: p.sost25Over,
+    mov35Over: p.mov35Over, sost35Over: p.sost35Over,
+    mov45Over: p.mov45Over, sost45Over: p.sost45Over,
+    cuotaOverApertura,
+    cuotaOverCierre: p.cuotaOverCierre,
+    cuotaUnderApertura,
+    cuotaUnderCierre: p.cuotaUnderCierre,
     xgHomePost: statsExtra?.xgHomePost,
     xgAwayPost: statsExtra?.xgAwayPost,
     bigChancesHome: statsExtra?.bigChancesHome,
     bigChancesAway: statsExtra?.bigChancesAway,
     shotsOnTargetHome: statsExtra?.shotsOnTargetHome,
     shotsOnTargetAway: statsExtra?.shotsOnTargetAway,
+    redCardsHome: statsExtra?.redCardsHome,
+    redCardsAway: statsExtra?.redCardsAway,
+    minutoRojaHome: statsExtra?.minutoRojaHome,
+    minutoRojaAway: statsExtra?.minutoRojaAway,
   });
 }
 
@@ -1077,7 +1276,7 @@ async function enviarSolicitudMarcador(matchId) {
 }
 
 // ==================================================================
-// WEBHOOK TELEGRAM — v4.6: también intenta traer stats de FotMob
+// WEBHOOK TELEGRAM
 // ==================================================================
 
 app.post('/api/telegram-webhook/:secret', async (req, res) => {
@@ -1099,8 +1298,6 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
     const mFinal = `${regex[1]}-${regex[2]}`;
     const goles = parseInt(regex[1]) + parseInt(regex[2]);
 
-    // v4.6: best-effort — intentar traer stats de FotMob antes de cerrar
-    // Si falla o FotMob aún no marcó el partido como terminado, se cierra sin stats
     let statsExtra = {};
     if (FOTMOB_ENABLED) {
       try {
@@ -1137,9 +1334,14 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
 // RUTAS
 // ==================================================================
 
+// C2: incluir abortados del día actual en la respuesta
 app.get('/api/estado', (req, res) => {
-  const todos = Object.values(leerDB().partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
-  res.json({ partidos: todos.filter(p => p.estado !== 'cerrado' && p.estado !== 'abortado') });
+  const db = leerDB();
+  const hoy = obtenerDiaLocal(new Date().toISOString());
+  const todos = Object.values(db.partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
+  const vivos = todos.filter(p => p.estado !== 'cerrado' && p.estado !== 'abortado');
+  const abortadosHoy = todos.filter(p => p.estado === 'abortado' && p.diaLocal === hoy);
+  res.json({ partidos: vivos, abortadosHoy });
 });
 
 app.get('/api/estadisticas', async (req, res) => {
@@ -1175,10 +1377,19 @@ app.post('/api/limpiar-obsoletos', async (req, res) => {
   }
 });
 
-// v4.6: endpoint para forzar FotMob manualmente
 app.post('/api/autocompletar', async (req, res) => {
   try {
     const result = await autoCompletarMarcadores();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// C3: nuevo endpoint de backfill
+app.post('/api/backfill', async (req, res) => {
+  try {
+    const result = await backfillHistorial();
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1193,7 +1404,7 @@ app.post('/api/buscar-partidos', async (req, res) => {
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ==================================================================
-// ARRANQUE
+// ARRANQUE — A2: FotMob antes de cleanup
 // ==================================================================
 
 app.listen(PORT, async () => {
@@ -1202,6 +1413,17 @@ app.listen(PORT, async () => {
 
   PRIORS = await cargarPriors();
   await recuperarEstadoSiHaceFalta();
+
+  // A2: procesar primero con FotMob, después limpiar
+  if (FOTMOB_ENABLED) {
+    console.log('📡 Procesando partidos pendientes con FotMob...');
+    try {
+      const r = await autoCompletarMarcadores();
+      console.log(`📡 Auto-fill inicio: ${r.completados}/${r.candidatos} completados`);
+    } catch (err) {
+      console.error(`❌ Auto-fill inicio falló: ${err.message}`);
+    }
+  }
 
   await conBloqueoDB(async () => {
     const db = leerDB();
@@ -1247,7 +1469,7 @@ app.listen(PORT, async () => {
   reglaBusqueda.tz = ZONA_HORARIA; reglaBusqueda.hour = parseInt(h); reglaBusqueda.minute = parseInt(m);
   schedule.scheduleJob(reglaBusqueda, buscarYProgramarPartidos);
 
-  // v4.6: cron FotMob cada 3h (:15)
+  // Cron FotMob cada 3h
   if (FOTMOB_ENABLED) {
     const reglaFotMob = new schedule.RecurrenceRule();
     reglaFotMob.tz = ZONA_HORARIA;
@@ -1255,6 +1477,14 @@ app.listen(PORT, async () => {
     reglaFotMob.minute = 15;
     schedule.scheduleJob(reglaFotMob, autoCompletarMarcadores);
     console.log(`⏰ FotMob cron: ${FOTMOB_HORAS_CRON.map(h => `${h}:15`).join(', ')} (${ZONA_HORARIA})`);
+
+    // C4: cron de backfill 06:00 y 18:00
+    const reglaBackfill = new schedule.RecurrenceRule();
+    reglaBackfill.tz = ZONA_HORARIA;
+    reglaBackfill.hour = [6, 18];
+    reglaBackfill.minute = 0;
+    schedule.scheduleJob(reglaBackfill, backfillHistorial);
+    console.log(`⏰ Backfill cron: 06:00, 18:00 (${ZONA_HORARIA})`);
   }
 
   configurarWebhookTelegram();
