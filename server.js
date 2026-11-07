@@ -45,7 +45,7 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.8';
+const VERSION_REGLA = 'v4.9';
 
 const UMBRAL_ABORTO_CUOTA = 2.30;
 const UMBRAL_XG_24H_MIN = 2.10;
@@ -71,6 +71,12 @@ const ESPERA_REINTENTO_MS = 30000;
 
 // C5: reemplazos hasta T-6h (antes era T-24h)
 const VENTANA_REEMPLAZO_MS = 6 * 3600000;
+
+// v4.9 Fix 2: margen mínimo para que el peaje del reemplazo corra en el futuro
+const MARGEN_PEAJE_REEMPLAZO_MS = 30 * 60000; // 30 min
+
+// v4.9 Fix 1: delay para peaje atrasado (evita race condition con guardarDB)
+const DELAY_PEAJE_ATRASADO_MS = 5000; // 5s
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
 const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
@@ -254,7 +260,6 @@ async function buscarPartidoEnFotMob(p, cacheFechas) {
   return null;
 }
 
-// B2 + B4: extraer stats post-partido + tarjetas rojas + minuto + log coverageLevel
 async function obtenerStatsPost(matchIdFotMob) {
   if (!matchIdFotMob) return null;
   try {
@@ -273,7 +278,6 @@ async function obtenerStatsPost(matchIdFotMob) {
     }
     const data = await res.json();
 
-    // B4: log de coverageLevel para saber qué % de partidos tiene stats
     const coverageLevel = data.general?.coverageLevel || 'desconocido';
     console.log(`📊 matchDetails ${matchIdFotMob}: coverageLevel=${coverageLevel}`);
 
@@ -295,12 +299,10 @@ async function obtenerStatsPost(matchIdFotMob) {
       return isNaN(n) ? null : n;
     };
 
-    // B2: extraer tarjetas rojas del header.status
     const status = data.header?.status || {};
     const redCardsHome = status.numberOfHomeRedCards ?? 0;
     const redCardsAway = status.numberOfAwayRedCards ?? 0;
 
-    // B2: buscar el minuto de la primera roja de cada equipo en los eventos
     const eventos = data.content?.matchFacts?.events?.events || [];
     const rojasHome = eventos.filter(e =>
       e.type === 'Card' &&
@@ -327,7 +329,6 @@ async function obtenerStatsPost(matchIdFotMob) {
       bigChancesAway: parseNum(bcAway, false),
       shotsOnTargetHome: parseNum(sotHome, false),
       shotsOnTargetAway: parseNum(sotAway, false),
-      // B2
       redCardsHome,
       redCardsAway,
       minutoRojaHome,
@@ -366,7 +367,6 @@ async function autoCompletarMarcadores() {
 
       const resultado = await buscarPartidoEnFotMob(p, cacheFechas);
       if (!resultado) {
-        // B3: log de partidos no encontrados
         console.log(`🔍 Sin match FotMob: ${p.homeTeam} vs ${p.awayTeam} (${p.commenceTime})`);
         continue;
       }
@@ -404,14 +404,12 @@ async function autoCompletarMarcadores() {
   });
 }
 
-// C3: backfill de filas viejas con marcador vacío en Sheets
 async function backfillHistorial() {
   if (!FOTMOB_ENABLED || !GOOGLE_SHEETS_WEBHOOK_URL) {
     return { rellenados: 0, candidatos: 0 };
   }
 
   try {
-    // 1. Traer historial de Sheets
     const res = await fetch(`${GOOGLE_SHEETS_WEBHOOK_URL}?secreto=${encodeURIComponent(GOOGLE_SHEETS_SECRETO)}`);
     const data = await res.json();
     if (!data.ok || !Array.isArray(data.historial)) {
@@ -419,7 +417,6 @@ async function backfillHistorial() {
       return { rellenados: 0, candidatos: 0 };
     }
 
-    // 2. Filtrar filas con marcador vacío (o '')
     const filasVacias = data.historial.filter(h => {
       const marcadorVacio = !h.marcador || String(h.marcador).trim() === '';
       const partidoEmpezado = h.horaInicioReal && (Date.now() - new Date(h.horaInicioReal).getTime() > 2 * 3600000);
@@ -548,7 +545,6 @@ async function limpiarPartidosObsoletos(db) {
 // COMUNICACIÓN EXTERNA
 // ==================================================================
 
-// A3: log del error cuando Sheets falla
 async function enviarASheets(payload) {
   if (!GOOGLE_SHEETS_WEBHOOK_URL) return false;
   try {
@@ -924,18 +920,21 @@ async function buscarYProgramarPartidos() {
   });
 }
 
+// v4.9 Fix 1: delay de 5s si el peaje ya pasó (evita race condition con guardarDB)
 function programarChequeoPeaje(matchId, partido) {
   const tiempoInicio = new Date(partido.commenceTime).getTime();
   const ejecucion24h = new Date(tiempoInicio - CHECKPOINTS[0].ms);
 
   if (ejecucion24h.getTime() <= Date.now() && tiempoInicio > Date.now()) {
-    ejecutarChequeo(matchId, '24h', true);
+    console.log(`⏰ Peaje 24h atrasado para ${partido.homeTeam} vs ${partido.awayTeam}, ejecutando en ${DELAY_PEAJE_ATRASADO_MS / 1000}s...`);
+    setTimeout(() => {
+      ejecutarChequeo(matchId, '24h', true);
+    }, DELAY_PEAJE_ATRASADO_MS);
   } else if (ejecucion24h.getTime() > Date.now()) {
     trabajosActivos[`${matchId}_24h`] = schedule.scheduleJob(ejecucion24h, () => ejecutarChequeo(matchId, '24h', false));
   }
 }
 
-// C5: reemplazos hasta T-6h en vez de T-24h
 async function buscarReemplazo(diaLocal, tiempoLibreMs, db) {
   const candidatos = db.calendarioDia || [];
   const partidosVivos = Object.values(db.partidos).filter(p => p.estado === 'activo' || p.estado === 'en_cola');
@@ -968,7 +967,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
     if (i < INTENTOS_API_MAX) await new Promise(r => setTimeout(r, ESPERA_REINTENTO_MS));
   }
 
-  // C1: si fallaron todos los intentos, abortar con motivo
   if (!datos) {
     console.warn(`⚠️ ${cpClave} falló ${INTENTOS_API_MAX}x para ${pInicial.homeTeam} vs ${pInicial.awayTeam}`);
     await conBloqueoDB(async () => {
@@ -977,14 +975,12 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
       if (!p || p.estado === 'abortado' || p.estado === 'cerrado') return;
 
       if (cpClave === '24h') {
-        // Si falla el peaje, el partido no puede seguir → abortar
         p.estado = 'abortado';
         p.nivelPeaje = 'DESCARTE';
         p.motivoAborto = `api_fallo_${INTENTOS_API_MAX}intentos`;
         limpiarJobsPartido(matchId);
         await enviarTelegram(`❌ ${p.homeTeam} vs ${p.awayTeam}\nAPI falló ${INTENTOS_API_MAX} veces. Partido abortado.`);
       } else {
-        // Si falla 1h o 5m, dejar que el siguiente cron de cleanup lo cierre
         p.motivoDecision = `api_fallo_${cpClave}`;
       }
       guardarDB(db);
@@ -992,7 +988,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
     return;
   }
 
-  // Éxito: continuar con el flujo normal
   enviarASheets({
     tipo: 'chequeo', fechaCaptura: new Date().toISOString(),
     partidoId: pInicial.id, partido: `${pInicial.homeTeam} vs ${pInicial.awayTeam}`,
@@ -1037,7 +1032,12 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
         p.motivoAborto = motivo;
         await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
 
-        const tiempoHueco = new Date(p.commenceTime).getTime() - GAP_MINIMO_MS;
+        // v4.9 Fix 2: el reemplazo debe empezar al menos 30 min después de "ahora"
+        // y en o después del partido original (para que su peaje 24h corra en el futuro)
+        const tiempoHueco = Math.max(
+          Date.now() + MARGEN_PEAJE_REEMPLAZO_MS,
+          new Date(p.commenceTime).getTime()
+        );
         const nuevoEv = await buscarReemplazo(p.diaLocal, tiempoHueco, db);
         if (nuevoEv) {
           const numActuales = Object.keys(db.partidos).length;
@@ -1182,7 +1182,7 @@ async function ejecutarPrediccion(matchId) {
 }
 
 // ==================================================================
-// HISTORIAL — A1: fallback a cuotas['24h'] para abortados
+// HISTORIAL
 // ==================================================================
 
 async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
@@ -1197,7 +1197,6 @@ async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
     }
   }
 
-  // A1: fallback para abortados que nunca llegaron al 5m
   const cuota24h = p.cuotas?.['24h']?.lineas?.[LINEA_PRINCIPAL];
   const cuotaOverApertura = (typeof p.cuotaOverApertura === 'number' && !isNaN(p.cuotaOverApertura))
     ? p.cuotaOverApertura
@@ -1334,13 +1333,17 @@ app.post('/api/telegram-webhook/:secret', async (req, res) => {
 // RUTAS
 // ==================================================================
 
-// C2: incluir abortados del día actual en la respuesta
 app.get('/api/estado', (req, res) => {
   const db = leerDB();
-  const hoy = obtenerDiaLocal(new Date().toISOString());
+  const ahora = Date.now();
   const todos = Object.values(db.partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
   const vivos = todos.filter(p => p.estado !== 'cerrado' && p.estado !== 'abortado');
-  const abortadosHoy = todos.filter(p => p.estado === 'abortado' && p.diaLocal === hoy);
+  // Abortados cuyo partido empieza entre ahora y +36h (los operativamente relevantes)
+  const abortadosHoy = todos.filter(p =>
+    p.estado === 'abortado' &&
+    new Date(p.commenceTime).getTime() > ahora &&
+    new Date(p.commenceTime).getTime() < ahora + 36 * 3600000
+  );
   res.json({ partidos: vivos, abortadosHoy });
 });
 
@@ -1386,7 +1389,6 @@ app.post('/api/autocompletar', async (req, res) => {
   }
 });
 
-// C3: nuevo endpoint de backfill
 app.post('/api/backfill', async (req, res) => {
   try {
     const result = await backfillHistorial();
@@ -1404,7 +1406,7 @@ app.post('/api/buscar-partidos', async (req, res) => {
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ==================================================================
-// ARRANQUE — A2: FotMob antes de cleanup
+// ARRANQUE
 // ==================================================================
 
 app.listen(PORT, async () => {
@@ -1469,7 +1471,6 @@ app.listen(PORT, async () => {
   reglaBusqueda.tz = ZONA_HORARIA; reglaBusqueda.hour = parseInt(h); reglaBusqueda.minute = parseInt(m);
   schedule.scheduleJob(reglaBusqueda, buscarYProgramarPartidos);
 
-  // Cron FotMob cada 3h
   if (FOTMOB_ENABLED) {
     const reglaFotMob = new schedule.RecurrenceRule();
     reglaFotMob.tz = ZONA_HORARIA;
@@ -1478,7 +1479,6 @@ app.listen(PORT, async () => {
     schedule.scheduleJob(reglaFotMob, autoCompletarMarcadores);
     console.log(`⏰ FotMob cron: ${FOTMOB_HORAS_CRON.map(h => `${h}:15`).join(', ')} (${ZONA_HORARIA})`);
 
-    // C4: cron de backfill 06:00 y 18:00
     const reglaBackfill = new schedule.RecurrenceRule();
     reglaBackfill.tz = ZONA_HORARIA;
     reglaBackfill.hour = [6, 18];
