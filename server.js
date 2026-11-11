@@ -13,16 +13,14 @@ const PORT = process.env.PORT || 3000;
 const ODDS_API_KEY = process.env.THE_ODDS_API_KEY;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || 'cambia-este-secreto';
 const GOOGLE_SHEETS_WEBHOOK_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
 const GOOGLE_SHEETS_SECRETO = process.env.GOOGLE_SHEETS_SECRETO || 'cambia-este-secreto';
 
-// FotMob auto-fill
+// FotMob auto-fill (v4.10: solo FotMob, sin manual)
 const FOTMOB_ENABLED = process.env.FOTMOB_ENABLED !== 'false';
 const FOTMOB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const FOTMOB_HORAS_CRON = [0, 3, 6, 9, 12, 15, 18, 21];
-const FOTMOB_UMBRAL_HORAS_OVER = 3;
-const FOTMOB_UMBRAL_HORAS_ABORTADO = 2;
+const FOTMOB_HORAS_CRON = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22];
+const FOTMOB_UMBRAL_HORAS = 4;
 
 const DB_PATH = path.join(__dirname, 'database.json');
 const PRIORS_LOCAL_PATH = path.join(__dirname, 'priors.json');
@@ -45,14 +43,14 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.9';
+const VERSION_REGLA = 'v4.10';
 
 const UMBRAL_ABORTO_CUOTA = 2.30;
 const UMBRAL_XG_24H_MIN = 2.10;
 const UMBRAL_XG_CONTRADICE = 2.60;
 const UMBRAL_CASAS_MIN = 3;
 const UMBRAL_CASAS_PEAJE = 5;
-const UMBRAL_SCORE_OVER = 55;
+const UMBRAL_SCORE_OVER = 60;  // v4.10: subido de 55 a 60
 const UMBRAL_PROMETEDOR_CUOTA = 2.05;
 
 const UMBRAL_PRIOR_OVER_RATE_MIN = 0.25;
@@ -65,18 +63,54 @@ const VENTANA_INICIO_MIN = 6 * 60;
 const VENTANA_FIN_MIN = 23 * 60 + 30;
 const OBJETIVO_MENSUAL_ACTIVOS = 120;
 
-// C1: si fallan 3 intentos de API, abortar en vez de quedar colgado
 const INTENTOS_API_MAX = 3;
 const ESPERA_REINTENTO_MS = 30000;
 
-// C5: reemplazos hasta T-6h (antes era T-24h)
 const VENTANA_REEMPLAZO_MS = 6 * 3600000;
+const MARGEN_PEAJE_REEMPLAZO_MS = 30 * 60000;
+const DELAY_PEAJE_ATRASADO_MS = 5000;
 
-// v4.9 Fix 2: margen mínimo para que el peaje del reemplazo corra en el futuro
-const MARGEN_PEAJE_REEMPLAZO_MS = 30 * 60000; // 30 min
-
-// v4.9 Fix 1: delay para peaje atrasado (evita race condition con guardarDB)
-const DELAY_PEAJE_ATRASADO_MS = 5000; // 5s
+// v4.10: alias para FotMob (name matching)
+const ALIASES_FOTMOB = {
+  'hertha bsc': 'hertha berlin',
+  'olympique marseille': 'marseille',
+  'olympique de marseille': 'marseille',
+  'wolverhampton': 'wolves',
+  'wolverhampton wanderers': 'wolves',
+  'inter': 'inter milan',
+  'internazionale': 'inter milan',
+  'athletic bilbao': 'athletic club',
+  'athletic': 'athletic club',
+  'betis': 'real betis',
+  'psg': 'paris saint germain',
+  'paris sg': 'paris saint germain',
+  'man city': 'manchester city',
+  'man united': 'manchester united',
+  'man utd': 'manchester united',
+  'spurs': 'tottenham',
+  'tottenham hotspur': 'tottenham',
+  'real racing club de santander': 'racing santander',
+  'atletico paranaense': 'athletico paranaense',
+  'sporting lisbon': 'sporting cp',
+  'moreirense fc': 'moreirense',
+  'fc zwolle': 'zwolle',
+  'fc twente enschede': 'twente',
+  'fc schalke 04': 'schalke 04',
+  '1 fc heidenheim': 'heidenheim',
+  '1 fc kaiserslautern': 'kaiserslautern',
+  '1 fc koln': 'koln',
+  'cologne': 'koln',
+  'bayern munich': 'bayern munchen',
+  'borussia monchengladbach': 'monchengladbach',
+  'hamburger sv': 'hamburg',
+  'rb leipzig': 'leipzig',
+  'bayer leverkusen': 'leverkusen',
+  'vfl wolfsburg': 'wolfsburg',
+  'vfl osnabruck': 'osnabruck',
+  'sc telstar': 'telstar',
+  'chivas': 'guadalajara',
+  'fc juarez': 'juarez',
+};
 
 const HORA_BUSQUEDA_DIARIA = process.env.HORA_BUSQUEDA_DIARIA || '05:00';
 const ZONA_HORARIA = process.env.ZONA_HORARIA || 'America/Lima';
@@ -159,11 +193,6 @@ function limpiarJobsPartido(matchId) {
       delete trabajosActivos[key];
     }
   }
-  const keyM = `${matchId}_marcador`;
-  if (trabajosActivos[keyM]) {
-    try { trabajosActivos[keyM].cancel(); } catch (e) {}
-    delete trabajosActivos[keyM];
-  }
 }
 
 // ==================================================================
@@ -171,7 +200,7 @@ function limpiarJobsPartido(matchId) {
 // ==================================================================
 
 function normalizarEquipo(nombre) {
-  return String(nombre || '')
+  const norm = String(nombre || '')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[.']/g, '')
@@ -179,6 +208,7 @@ function normalizarEquipo(nombre) {
     .replace(/\s+(fc|cf|sc|ac|as|ss|ssc|rc|cd|ud|ca|club)$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
+  return ALIASES_FOTMOB[norm] || norm;
 }
 
 function equiposCoinciden(a, b) {
@@ -277,7 +307,6 @@ async function obtenerStatsPost(matchIdFotMob) {
       return null;
     }
     const data = await res.json();
-
     const coverageLevel = data.general?.coverageLevel || 'desconocido';
     console.log(`📊 matchDetails ${matchIdFotMob}: coverageLevel=${coverageLevel}`);
 
@@ -305,22 +334,14 @@ async function obtenerStatsPost(matchIdFotMob) {
 
     const eventos = data.content?.matchFacts?.events?.events || [];
     const rojasHome = eventos.filter(e =>
-      e.type === 'Card' &&
-      (e.card === 'Red' || e.card === 'YellowRed') &&
-      e.isHome === true
+      e.type === 'Card' && (e.card === 'Red' || e.card === 'YellowRed') && e.isHome === true
     );
     const rojasAway = eventos.filter(e =>
-      e.type === 'Card' &&
-      (e.card === 'Red' || e.card === 'YellowRed') &&
-      e.isHome === false
+      e.type === 'Card' && (e.card === 'Red' || e.card === 'YellowRed') && e.isHome === false
     );
 
-    const minutoRojaHome = rojasHome.length > 0
-      ? Math.min(...rojasHome.map(r => parseInt(r.timeStr) || 90))
-      : null;
-    const minutoRojaAway = rojasAway.length > 0
-      ? Math.min(...rojasAway.map(r => parseInt(r.timeStr) || 90))
-      : null;
+    const minutoRojaHome = rojasHome.length > 0 ? Math.min(...rojasHome.map(r => parseInt(r.timeStr) || 90)) : null;
+    const minutoRojaAway = rojasAway.length > 0 ? Math.min(...rojasAway.map(r => parseInt(r.timeStr) || 90)) : null;
 
     return {
       xgHomePost: parseNum(xgHome),
@@ -329,10 +350,7 @@ async function obtenerStatsPost(matchIdFotMob) {
       bigChancesAway: parseNum(bcAway, false),
       shotsOnTargetHome: parseNum(sotHome, false),
       shotsOnTargetAway: parseNum(sotAway, false),
-      redCardsHome,
-      redCardsAway,
-      minutoRojaHome,
-      minutoRojaAway,
+      redCardsHome, redCardsAway, minutoRojaHome, minutoRojaAway,
     };
   } catch (err) {
     console.warn(`⚠️ matchDetails ${matchIdFotMob}: ${err.message}`);
@@ -342,7 +360,6 @@ async function obtenerStatsPost(matchIdFotMob) {
 
 async function autoCompletarMarcadores() {
   if (!FOTMOB_ENABLED) {
-    console.log('⏭️ FotMob deshabilitado (FOTMOB_ENABLED=false)');
     return { completados: 0, candidatos: 0 };
   }
 
@@ -358,9 +375,10 @@ async function autoCompletarMarcadores() {
       const commenceTime = new Date(p.commenceTime).getTime();
       const horasDesdeInicio = (ahora - commenceTime) / 3600000;
 
+      // v4.10: incluir SIN_APUESTA y ABORTADO y OVER
       const esCandidato =
-        (p.estado === 'activo' && p.prediccion === 'OVER' && horasDesdeInicio > FOTMOB_UMBRAL_HORAS_OVER) ||
-        (p.estado === 'abortado' && horasDesdeInicio > FOTMOB_UMBRAL_HORAS_ABORTADO);
+        (p.estado === 'activo' && p.prediccionEnviada && horasDesdeInicio > FOTMOB_UMBRAL_HORAS) ||
+        (p.estado === 'abortado' && horasDesdeInicio > FOTMOB_UMBRAL_HORAS);
 
       if (!esCandidato) continue;
       candidatos++;
@@ -376,10 +394,7 @@ async function autoCompletarMarcadores() {
 
       const statsPost = await obtenerStatsPost(resultado.id);
       const xgTxt = statsPost ? `xG ${statsPost.xgHomePost ?? '?'}-${statsPost.xgAwayPost ?? '?'}` : 'sin stats';
-      const rojaTxt = statsPost && (statsPost.redCardsHome > 0 || statsPost.redCardsAway > 0)
-        ? ` | 🟥 ${statsPost.redCardsHome}-${statsPost.redCardsAway}`
-        : '';
-      console.log(`⚽ FotMob: ${p.homeTeam} vs ${p.awayTeam} = ${marcador} (${xgTxt}${rojaTxt})`);
+      console.log(`⚽ FotMob: ${p.homeTeam} vs ${p.awayTeam} = ${marcador} (${xgTxt})`);
 
       const exito = await cerrarPartidoEnHistorial(p, marcador, statsPost || {});
       if (!exito) {
@@ -413,7 +428,6 @@ async function backfillHistorial() {
     const res = await fetch(`${GOOGLE_SHEETS_WEBHOOK_URL}?secreto=${encodeURIComponent(GOOGLE_SHEETS_SECRETO)}`);
     const data = await res.json();
     if (!data.ok || !Array.isArray(data.historial)) {
-      console.log('⏭️ Backfill: sin historial para procesar');
       return { rellenados: 0, candidatos: 0 };
     }
 
@@ -428,8 +442,6 @@ async function backfillHistorial() {
       console.log('⏭️ Backfill: 0 filas pendientes');
       return { rellenados: 0, candidatos: 0 };
     }
-
-    console.log(`🔍 Backfill: ${filasVacias.length} filas con marcador vacío`);
 
     const cacheFechas = {};
     let rellenados = 0;
@@ -454,8 +466,7 @@ async function backfillHistorial() {
         tipo: 'actualizar-historial',
         partido: h.partido,
         horaInicioReal: h.horaInicioReal,
-        marcador,
-        golesTotales: goles,
+        marcador, golesTotales: goles,
         xgHomePost: statsPost.xgHomePost,
         xgAwayPost: statsPost.xgAwayPost,
         bigChancesHome: statsPost.bigChancesHome,
@@ -476,7 +487,6 @@ async function backfillHistorial() {
 
     console.log(`🔍 Backfill: ${rellenados}/${filasVacias.length} rellenados`);
     return { rellenados, candidatos: filasVacias.length };
-
   } catch (err) {
     console.error(`❌ Backfill error: ${err.message}`);
     return { rellenados: 0, candidatos: 0, error: err.message };
@@ -484,7 +494,7 @@ async function backfillHistorial() {
 }
 
 // ==================================================================
-// LIMPIEZA DE PARTIDOS OBSOLETOS
+// LIMPIEZA
 // ==================================================================
 
 async function limpiarPartidosObsoletos(db) {
@@ -511,10 +521,10 @@ async function limpiarPartidosObsoletos(db) {
       debeEliminar = true;
       debeCerrarEnHistorial = true;
       razon = 'over+48h';
-    } else if (p.estado === 'activo' && p.prediccionEnviada && p.prediccion !== 'OVER' && horasDesdeInicio > 6) {
+    } else if (p.estado === 'activo' && p.prediccionEnviada && p.prediccion !== 'OVER' && horasDesdeInicio > 8) {
       debeEliminar = true;
       debeCerrarEnHistorial = true;
-      razon = 'sin_apuesta+6h';
+      razon = 'sin_apuesta+8h';
     } else if (p.estado === 'abortado' && horasDesdeInicio > 24) {
       debeEliminar = true;
       debeCerrarEnHistorial = true;
@@ -592,17 +602,6 @@ async function enviarTelegram(mensaje) {
   } catch (err) {
     return null;
   }
-}
-
-async function configurarWebhookTelegram() {
-  if (!TELEGRAM_TOKEN) return;
-  const urlPublica = process.env.RENDER_EXTERNAL_URL;
-  if (!urlPublica) return;
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: `${urlPublica}/api/telegram-webhook/${TELEGRAM_WEBHOOK_SECRET}` }),
-  });
 }
 
 // ==================================================================
@@ -784,10 +783,13 @@ function scoreOver(p) {
     else if (xg <  2.4) score -= 20;
   }
 
+  // v4.10: penalizar simétrico por sobre-reacción (antes solo positivo)
   const mov = (typeof p.mov35Over === 'number' && !isNaN(p.mov35Over)) ? p.mov35Over : 0;
   if (Math.abs(mov) < 1.5)          score += 10;
   else if (mov > 1.5 && mov < 4.0)  score += 5;
-  else if (mov > 4.0)               score -= 15;
+  else if (mov > 4.0)               score -= 25;
+  else if (mov < -4.0)              score -= 25;
+  else if (mov < -1.5)              score -= 10;
 
   if (typeof p.deltaLineaPrincipal === 'number') {
     if (p.deltaLineaPrincipal >= 0.5)       score += 10;
@@ -806,7 +808,7 @@ function scoreOver(p) {
 }
 
 // ==================================================================
-// SELECCIÓN Y COLA
+// SELECCIÓN
 // ==================================================================
 
 function crearRegistroPartido(evento, diaLocal, etiqueta) {
@@ -815,7 +817,7 @@ function crearRegistroPartido(evento, diaLocal, etiqueta) {
     commenceTime: evento.commence_time, diaLocal, etiqueta, cuotas: {},
     estado: 'en_cola',
     nivelPeaje: null,
-    prediccionEnviada: false, prediccion: null, scoreOver: null, mensajeMarcadorId: null
+    prediccionEnviada: false, prediccion: null, scoreOver: null
   };
 }
 
@@ -920,7 +922,6 @@ async function buscarYProgramarPartidos() {
   });
 }
 
-// v4.9 Fix 1: delay de 5s si el peaje ya pasó (evita race condition con guardarDB)
 function programarChequeoPeaje(matchId, partido) {
   const tiempoInicio = new Date(partido.commenceTime).getTime();
   const ejecucion24h = new Date(tiempoInicio - CHECKPOINTS[0].ms);
@@ -959,11 +960,9 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
   if (!pInicial || pInicial.estado === 'abortado' || pInicial.estado === 'cerrado') return;
 
   let datos = null;
-  let ultimoError = null;
   for (let i = 1; i <= INTENTOS_API_MAX; i++) {
     datos = await obtenerCuotasTotales(pInicial.sportKey, pInicial.id, cpClave);
     if (datos) break;
-    ultimoError = `intento ${i}/${INTENTOS_API_MAX} falló`;
     if (i < INTENTOS_API_MAX) await new Promise(r => setTimeout(r, ESPERA_REINTENTO_MS));
   }
 
@@ -980,8 +979,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
         p.motivoAborto = `api_fallo_${INTENTOS_API_MAX}intentos`;
         limpiarJobsPartido(matchId);
         await enviarTelegram(`❌ ${p.homeTeam} vs ${p.awayTeam}\nAPI falló ${INTENTOS_API_MAX} veces. Partido abortado.`);
-      } else {
-        p.motivoDecision = `api_fallo_${cpClave}`;
       }
       guardarDB(db);
     });
@@ -1032,8 +1029,6 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
         p.motivoAborto = motivo;
         await enviarTelegram(`🛑 Descartado (${motivo})\n⚽ ${p.homeTeam} vs ${p.awayTeam}\nBuscando reemplazo...`);
 
-        // v4.9 Fix 2: el reemplazo debe empezar al menos 30 min después de "ahora"
-        // y en o después del partido original (para que su peaje 24h corra en el futuro)
         const tiempoHueco = Math.max(
           Date.now() + MARGEN_PEAJE_REEMPLAZO_MS,
           new Date(p.commenceTime).getTime()
@@ -1173,11 +1168,6 @@ async function ejecutarPrediccion(matchId) {
     p.motivoDecision = motivo;
     db.partidos[matchId] = p;
     guardarDB(db);
-
-    if (prediccion === 'OVER') {
-      const ts = new Date(new Date(p.commenceTime).getTime() + 3 * 3600000);
-      trabajosActivos[`${matchId}_marcador`] = schedule.scheduleJob(ts, () => enviarSolicitudMarcador(matchId));
-    }
   });
 }
 
@@ -1199,20 +1189,15 @@ async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
 
   const cuota24h = p.cuotas?.['24h']?.lineas?.[LINEA_PRINCIPAL];
   const cuotaOverApertura = (typeof p.cuotaOverApertura === 'number' && !isNaN(p.cuotaOverApertura))
-    ? p.cuotaOverApertura
-    : (cuota24h?.over ?? undefined);
+    ? p.cuotaOverApertura : (cuota24h?.over ?? undefined);
   const cuotaUnderApertura = (typeof p.cuotaUnderApertura === 'number' && !isNaN(p.cuotaUnderApertura))
-    ? p.cuotaUnderApertura
-    : (cuota24h?.under ?? undefined);
+    ? p.cuotaUnderApertura : (cuota24h?.under ?? undefined);
   const casas35 = (typeof p.casas35 === 'number' && !isNaN(p.casas35))
-    ? p.casas35
-    : (p.cuotas?.['24h']?.casas35 ?? undefined);
+    ? p.casas35 : (p.cuotas?.['24h']?.casas35 ?? undefined);
   const pinnacleOverApertura = (typeof p.pinnacleOverApertura === 'number' && !isNaN(p.pinnacleOverApertura))
-    ? p.pinnacleOverApertura
-    : (p.cuotas?.['24h']?.pinnacle35?.over ?? undefined);
+    ? p.pinnacleOverApertura : (p.cuotas?.['24h']?.pinnacle35?.over ?? undefined);
   const xgApertura = (typeof p.xgApertura === 'number' && !isNaN(p.xgApertura))
-    ? p.xgApertura
-    : (p.cuotas?.['24h']?.lineas ? calcularXGPoisson(p.cuotas['24h'].lineas) : undefined);
+    ? p.xgApertura : (p.cuotas?.['24h']?.lineas ? calcularXGPoisson(p.cuotas['24h'].lineas) : undefined);
 
   return await enviarASheets({
     fecha: new Date().toISOString(),
@@ -1229,28 +1214,20 @@ async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
     puntosUsados: p.puntosUsados,
     senalPonderada: p.senalPonderada,
     versionRegla: VERSION_REGLA,
-    casas35,
-    pinnacleOverApertura,
-    pinnacleOverCierre: p.pinnacleOverCierre,
-    xgApertura,
-    xgCierre: p.xgCierre,
+    casas35, pinnacleOverApertura, pinnacleOverCierre: p.pinnacleOverCierre,
+    xgApertura, xgCierre: p.xgCierre,
     recuperadoTarde: p.recuperadoTarde,
-    lineaPrincipal24h: p.lineaPrincipal24h,
-    lineaPrincipal5m: p.lineaPrincipal5m,
+    lineaPrincipal24h: p.lineaPrincipal24h, lineaPrincipal5m: p.lineaPrincipal5m,
     deltaLineaPrincipal: p.deltaLineaPrincipal,
-    pinVentaja24h: p.pinVentaja24h,
-    pinVentaja5m: p.pinVentaja5m,
-    scoreOver: p.scoreOver,
-    nivelPeaje: p.nivelPeaje,
+    pinVentaja24h: p.pinVentaja24h, pinVentaja5m: p.pinVentaja5m,
+    scoreOver: p.scoreOver, nivelPeaje: p.nivelPeaje,
     motivoDecision: p.motivoDecision || p.motivoAborto || '',
     mov15Over: p.mov15Over, sost15Over: p.sost15Over,
     mov25Over: p.mov25Over, sost25Over: p.sost25Over,
     mov35Over: p.mov35Over, sost35Over: p.sost35Over,
     mov45Over: p.mov45Over, sost45Over: p.sost45Over,
-    cuotaOverApertura,
-    cuotaOverCierre: p.cuotaOverCierre,
-    cuotaUnderApertura,
-    cuotaUnderCierre: p.cuotaUnderCierre,
+    cuotaOverApertura, cuotaOverCierre: p.cuotaOverCierre,
+    cuotaUnderApertura, cuotaUnderCierre: p.cuotaUnderCierre,
     xgHomePost: statsExtra?.xgHomePost,
     xgAwayPost: statsExtra?.xgAwayPost,
     bigChancesHome: statsExtra?.bigChancesHome,
@@ -1264,71 +1241,6 @@ async function cerrarPartidoEnHistorial(p, marcador, statsExtra = {}) {
   });
 }
 
-async function enviarSolicitudMarcador(matchId) {
-  return conBloqueoDB(async () => {
-    const db = leerDB();
-    const p = db.partidos[matchId];
-    if (!p || p.mensajeMarcadorId || p.estado !== 'activo' || p.prediccion !== 'OVER') return;
-    const msgId = await enviarTelegram(`⚽ ¿Marcador final de ${p.homeTeam} vs ${p.awayTeam}? Respondé (ej: 2-1). También podés esperar el auto-registro de FotMob (max 6h).`);
-    if (msgId) { p.mensajeMarcadorId = msgId; guardarDB(db); }
-  });
-}
-
-// ==================================================================
-// WEBHOOK TELEGRAM
-// ==================================================================
-
-app.post('/api/telegram-webhook/:secret', async (req, res) => {
-  if (req.params.secret !== TELEGRAM_WEBHOOK_SECRET) return res.sendStatus(403);
-  const msg = req.body?.message;
-  if (!msg?.text || String(msg.chat.id) !== String(TELEGRAM_CHAT_ID) || !msg.reply_to_message) return res.sendStatus(200);
-
-  const respondeA = msg.reply_to_message.message_id;
-
-  await conBloqueoDB(async () => {
-    const db = leerDB();
-    const matchId = Object.keys(db.partidos).find(id => db.partidos[id].mensajeMarcadorId === respondeA);
-    if (!matchId) return;
-
-    const p = db.partidos[matchId];
-    const regex = msg.text.match(/(\d+)\s*[-:xX]\s*(\d+)/);
-    if (!regex) { await enviarTelegram('Formato inválido. Respondé "2-1".'); return; }
-
-    const mFinal = `${regex[1]}-${regex[2]}`;
-    const goles = parseInt(regex[1]) + parseInt(regex[2]);
-
-    let statsExtra = {};
-    if (FOTMOB_ENABLED) {
-      try {
-        const cacheFechas = {};
-        const resultado = await buscarPartidoEnFotMob(p, cacheFechas);
-        if (resultado) {
-          const stats = await obtenerStatsPost(resultado.id);
-          if (stats) statsExtra = stats;
-        }
-      } catch (err) {
-        console.warn(`⚠️ Stats post en webhook falló: ${err.message}`);
-      }
-    }
-
-    const exito = await cerrarPartidoEnHistorial(p, mFinal, statsExtra);
-
-    if (exito) {
-      const result = goles > 3.5 ? '🎉 ¡Acertaste!' : '❌ Fallo.';
-      const statsTxt = statsExtra.xgHomePost != null
-        ? `\n📊 xG: ${statsExtra.xgHomePost}-${statsExtra.xgAwayPost}`
-        : '';
-      await enviarTelegram(`✅ Registrado: ${mFinal} (${goles} goles). ${result}${statsTxt}`);
-      p.estado = 'cerrado';
-      limpiarJobsPartido(matchId);
-      delete db.partidos[matchId];
-      guardarDB(db);
-    }
-  });
-
-  res.sendStatus(200);
-});
-
 // ==================================================================
 // RUTAS
 // ==================================================================
@@ -1338,7 +1250,6 @@ app.get('/api/estado', (req, res) => {
   const ahora = Date.now();
   const todos = Object.values(db.partidos).sort((a, b) => new Date(a.commenceTime) - new Date(b.commenceTime));
   const vivos = todos.filter(p => p.estado !== 'cerrado' && p.estado !== 'abortado');
-  // Abortados cuyo partido empieza entre ahora y +36h (los operativamente relevantes)
   const abortadosHoy = todos.filter(p =>
     p.estado === 'abortado' &&
     new Date(p.commenceTime).getTime() > ahora &&
@@ -1398,6 +1309,57 @@ app.post('/api/backfill', async (req, res) => {
   }
 });
 
+// v4.10: forzar cierre de partidos atascados
+app.post('/api/forzar-cierre', async (req, res) => {
+  try {
+    // Primero intentar FotMob
+    let fotmobResult = { completados: 0, candidatos: 0 };
+    if (FOTMOB_ENABLED) {
+      try {
+        fotmobResult = await autoCompletarMarcadores();
+      } catch (err) {
+        console.warn(`⚠️ FotMob en forzar-cierre falló: ${err.message}`);
+      }
+    }
+
+    // Luego cleanup agresivo
+    const minHoras = parseFloat(req.query.minHoras) || 4;
+    const result = await conBloqueoDB(async () => {
+      const db = leerDB();
+      const ahora = Date.now();
+      let cerrados = 0;
+      let borrados = 0;
+      const partidosParaCerrar = [];
+
+      for (const id of Object.keys(db.partidos)) {
+        const p = db.partidos[id];
+        const horas = (ahora - new Date(p.commenceTime).getTime()) / 3600000;
+        if (horas >= minHoras) {
+          partidosParaCerrar.push(p);
+          limpiarJobsPartido(id);
+          delete db.partidos[id];
+          borrados++;
+        }
+      }
+
+      for (const p of partidosParaCerrar) {
+        try {
+          await cerrarPartidoEnHistorial(p, "");
+          cerrados++;
+        } catch (err) {
+          console.error(`Error cerrando ${p.homeTeam}: ${err.message}`);
+        }
+      }
+
+      if (borrados > 0) guardarDB(db);
+      return { cerrados, borrados, minHoras };
+    });
+    res.json({ ok: true, fotmob: fotmobResult, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/buscar-partidos', async (req, res) => {
   try { res.json(await buscarYProgramarPartidos()); }
   catch (err) { res.status(500).json({ ok: false }); }
@@ -1409,6 +1371,21 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 // ARRANQUE
 // ==================================================================
 
+async function cronFotMobYCleanup() {
+  try {
+    const fotmob = await autoCompletarMarcadores();
+    const cleanup = await conBloqueoDB(async () => {
+      const db = leerDB();
+      const r = await limpiarPartidosObsoletos(db);
+      if (r.eliminados > 0) guardarDB(db);
+      return r;
+    });
+    console.log(`⏰ Cron: FotMob ${fotmob.completados}/${fotmob.candidatos}, cleanup ${cleanup.eliminados}`);
+  } catch (err) {
+    console.error(`❌ Cron error: ${err.message}`);
+  }
+}
+
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor ${VERSION_REGLA} puerto ${PORT}`);
   console.log(`📡 FotMob ${FOTMOB_ENABLED ? 'habilitado' : 'deshabilitado'}`);
@@ -1416,7 +1393,6 @@ app.listen(PORT, async () => {
   PRIORS = await cargarPriors();
   await recuperarEstadoSiHaceFalta();
 
-  // A2: procesar primero con FotMob, después limpiar
   if (FOTMOB_ENABLED) {
     console.log('📡 Procesando partidos pendientes con FotMob...');
     try {
@@ -1459,16 +1435,15 @@ app.listen(PORT, async () => {
             ejecutarChequeo(id, cpFuturo, true);
           }
         });
-      } else if (!p.mensajeMarcadorId && p.prediccion === 'OVER') {
-        const t = new Date(new Date(p.commenceTime).getTime() + 3 * 3600000);
-        trabajosActivos[`${id}_marcador`] = schedule.scheduleJob(t, () => enviarSolicitudMarcador(id));
       }
     }
   });
 
   const [h, m] = HORA_BUSQUEDA_DIARIA.split(':');
   const reglaBusqueda = new schedule.RecurrenceRule();
-  reglaBusqueda.tz = ZONA_HORARIA; reglaBusqueda.hour = parseInt(h); reglaBusqueda.minute = parseInt(m);
+  reglaBusqueda.tz = ZONA_HORARIA;
+  reglaBusqueda.hour = parseInt(h);
+  reglaBusqueda.minute = parseInt(m);
   schedule.scheduleJob(reglaBusqueda, buscarYProgramarPartidos);
 
   if (FOTMOB_ENABLED) {
@@ -1476,8 +1451,8 @@ app.listen(PORT, async () => {
     reglaFotMob.tz = ZONA_HORARIA;
     reglaFotMob.hour = FOTMOB_HORAS_CRON;
     reglaFotMob.minute = 15;
-    schedule.scheduleJob(reglaFotMob, autoCompletarMarcadores);
-    console.log(`⏰ FotMob cron: ${FOTMOB_HORAS_CRON.map(h => `${h}:15`).join(', ')} (${ZONA_HORARIA})`);
+    schedule.scheduleJob(reglaFotMob, cronFotMobYCleanup);
+    console.log(`⏰ FotMob+cleanup cron: ${FOTMOB_HORAS_CRON.map(h => `${h}:15`).join(', ')} (${ZONA_HORARIA})`);
 
     const reglaBackfill = new schedule.RecurrenceRule();
     reglaBackfill.tz = ZONA_HORARIA;
@@ -1486,6 +1461,4 @@ app.listen(PORT, async () => {
     schedule.scheduleJob(reglaBackfill, backfillHistorial);
     console.log(`⏰ Backfill cron: 06:00, 18:00 (${ZONA_HORARIA})`);
   }
-
-  configurarWebhookTelegram();
 });
