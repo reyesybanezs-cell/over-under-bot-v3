@@ -1,0 +1,906 @@
+{
+  "version": "v4.11",
+  "actualizado": "2026-11-23",
+  "muestraBase": 52,
+  "metodo": "Empirical Bayes (k=6 ligas, k=4 equipos) sobre historial real Over 3.5",
+  "porLiga": {
+    "soccer_epl": {
+      "partidos": 6,
+      "overs": 3,
+      "overRate": 0.41,
+      "overRateCrudo": 0.5,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 3.24
+    },
+    "soccer_efl_champ": {
+      "partidos": 3,
+      "overs": 0,
+      "overRate": 0.16,
+      "overRateCrudo": 0.0,
+      "golesPromedio": 1.67,
+      "xgPostPromedio": 1.95
+    },
+    "soccer_germany_bundesliga": {
+      "partidos": 3,
+      "overs": 1,
+      "overRate": 0.351,
+      "overRateCrudo": 0.333,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 4.01
+    },
+    "soccer_spain_la_liga": {
+      "partidos": 2,
+      "overs": 0,
+      "overRate": 0.188,
+      "overRateCrudo": 0.0,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 4.98
+    },
+    "soccer_italy_serie_a": {
+      "partidos": 3,
+      "overs": 1,
+      "overRate": 0.291,
+      "overRateCrudo": 0.333,
+      "golesPromedio": 3.67,
+      "xgPostPromedio": 2.27
+    },
+    "soccer_france_ligue_one": {
+      "partidos": 0,
+      "overs": 0,
+      "overRate": 0.27,
+      "overRateCrudo": null,
+      "golesPromedio": null,
+      "xgPostPromedio": null
+    },
+    "soccer_netherlands_eredivisie": {
+      "partidos": 3,
+      "overs": 0,
+      "overRate": 0.24,
+      "overRateCrudo": 0.0,
+      "golesPromedio": 2.33,
+      "xgPostPromedio": 2.18
+    },
+    "soccer_portugal_primeira_liga": {
+      "partidos": 0,
+      "overs": 0,
+      "overRate": 0.26,
+      "overRateCrudo": null,
+      "golesPromedio": null,
+      "xgPostPromedio": null
+    },
+    "soccer_brazil_campeonato": {
+      "partidos": 9,
+      "overs": 2,
+      "overRate": 0.221,
+      "overRateCrudo": 0.222,
+      "golesPromedio": 2.56,
+      "xgPostPromedio": 2.23
+    },
+    "soccer_mexico_ligamx": {
+      "partidos": 8,
+      "overs": 2,
+      "overRate": 0.254,
+      "overRateCrudo": 0.25,
+      "golesPromedio": 2.25,
+      "xgPostPromedio": 2.66
+    },
+    "soccer_usa_mls": {
+      "partidos": 7,
+      "overs": 1,
+      "overRate": 0.22,
+      "overRateCrudo": 0.143,
+      "golesPromedio": 2.43,
+      "xgPostPromedio": 3.79
+    },
+    "soccer_argentina_primera_division": {
+      "partidos": 4,
+      "overs": 3,
+      "overRate": 0.408,
+      "overRateCrudo": 0.75,
+      "golesPromedio": 3.75,
+      "xgPostPromedio": 3.31
+    },
+    "soccer_uefa_champs_league": {
+      "partidos": 0,
+      "overs": 0,
+      "overRate": 0.33,
+      "overRateCrudo": null,
+      "golesPromedio": null,
+      "xgPostPromedio": null
+    },
+    "soccer_germany_bundesliga2": {
+      "partidos": 4,
+      "overs": 3,
+      "overRate": 0.51,
+      "overRateCrudo": 0.75,
+      "golesPromedio": 3.75,
+      "xgPostPromedio": 3.38
+    },
+    "soccer_uefa_europa_league": {
+      "partidos": 0,
+      "overs": 0,
+      "overRate": 0.3,
+      "overRateCrudo": null,
+      "golesPromedio": null,
+      "xgPostPromedio": null
+    }
+  },
+  "porEquipo": {
+    "1. FC Heidenheim": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.608,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 2.69
+    },
+    "1. FC Kaiserslautern": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.608,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.47
+    },
+    "1. FC Köln": {
+      "liga": "soccer_germany_bundesliga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.281,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 3.06
+    },
+    "1. FC Nürnberg": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.408,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 4.0
+    },
+    "AC Milan": {
+      "liga": "soccer_italy_serie_a",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.433,
+      "golesPromedio": 6.0,
+      "xgPostPromedio": 3.53
+    },
+    "ADO Den Haag": {
+      "liga": "soccer_netherlands_eredivisie",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.192,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 1.43
+    },
+    "Ajax": {
+      "liga": "soccer_netherlands_eredivisie",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.192,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 1.43
+    },
+    "América": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 1.1
+    },
+    "Arsenal": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.528,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.21
+    },
+    "Aston Villa": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.328,
+      "golesPromedio": 0.0,
+      "xgPostPromedio": 1.24
+    },
+    "Atlante FC": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.85
+    },
+    "Atlas": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.403,
+      "golesPromedio": 6.0,
+      "xgPostPromedio": 4.88
+    },
+    "Atletico Paranaense": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 2,
+      "overs": 1,
+      "overRate": 0.314,
+      "golesPromedio": 4.5,
+      "xgPostPromedio": 2.32
+    },
+    "Atlético Huracán": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.326,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.67
+    },
+    "Atlético Madrid": {
+      "liga": "soccer_spain_la_liga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.15,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 4.7
+    },
+    "Augsburg": {
+      "liga": "soccer_germany_bundesliga",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.481,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 4.67
+    },
+    "Bahia": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 0.0,
+      "xgPostPromedio": 2.71
+    },
+    "Bayern Munich": {
+      "liga": "soccer_germany_bundesliga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.281,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 3.06
+    },
+    "Belgrano de Cordoba": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.526,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.47
+    },
+    "Birmingham City": {
+      "liga": "soccer_efl_champ",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.128,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 1.5
+    },
+    "Bolton Wanderers": {
+      "liga": "soccer_efl_champ",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.128,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.48
+    },
+    "Botafogo": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.377,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 1.69
+    },
+    "Bournemouth": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.328,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 4.94
+    },
+    "Bristol City": {
+      "liga": "soccer_efl_champ",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.128,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 1.88
+    },
+    "Cagliari": {
+      "liga": "soccer_italy_serie_a",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.233,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 1.25
+    },
+    "Celta Vigo": {
+      "liga": "soccer_spain_la_liga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.15,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 5.27
+    },
+    "Chapecoense": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 2,
+      "overs": 0,
+      "overRate": 0.147,
+      "golesPromedio": 2.5,
+      "xgPostPromedio": 2.46
+    },
+    "Charlotte FC": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 5.34
+    },
+    "Chelsea": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.528,
+      "golesPromedio": 5.0,
+      "xgPostPromedio": 3.1
+    },
+    "Chicago Fire": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 5.34
+    },
+    "Como": {
+      "liga": "soccer_italy_serie_a",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.233,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 1.25
+    },
+    "Corinthians": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.377,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 1.69
+    },
+    "Coritiba": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.34
+    },
+    "Coventry City": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.528,
+      "golesPromedio": 5.0,
+      "xgPostPromedio": 3.87
+    },
+    "Cruz Azul": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.61
+    },
+    "Cruzeiro": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 1.76
+    },
+    "Crystal Palace": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.528,
+      "golesPromedio": 5.0,
+      "xgPostPromedio": 3.87
+    },
+    "Dynamo Dresden": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.608,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.47
+    },
+    "Eintracht Braunschweig": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.408,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 4.0
+    },
+    "FC Cincinnati": {
+      "liga": "soccer_usa_mls",
+      "partidos": 2,
+      "overs": 1,
+      "overRate": 0.313,
+      "golesPromedio": 2.5,
+      "xgPostPromedio": 3.72
+    },
+    "FC Dallas": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 3.97
+    },
+    "FC Energie Cottbus": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.608,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.38
+    },
+    "FC Juárez": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.403,
+      "golesPromedio": 6.0,
+      "xgPostPromedio": 4.88
+    },
+    "FC Schalke 04": {
+      "liga": "soccer_germany_bundesliga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.281,
+      "golesPromedio": 0.0,
+      "xgPostPromedio": 4.29
+    },
+    "FC Twente Enschede": {
+      "liga": "soccer_netherlands_eredivisie",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.192,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.66
+    },
+    "FSV Mainz 05": {
+      "liga": "soccer_germany_bundesliga",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.481,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 4.67
+    },
+    "Flamengo": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 1.43
+    },
+    "Fluminense": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 1.73
+    },
+    "Fortuna Sittard": {
+      "liga": "soccer_netherlands_eredivisie",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.192,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.44
+    },
+    "Frosinone": {
+      "liga": "soccer_italy_serie_a",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.433,
+      "golesPromedio": 6.0,
+      "xgPostPromedio": 3.53
+    },
+    "Getafe": {
+      "liga": "soccer_spain_la_liga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.15,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 4.7
+    },
+    "Gimnasia Mendoza": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.526,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.17
+    },
+    "Go Ahead Eagles": {
+      "liga": "soccer_netherlands_eredivisie",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.192,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.44
+    },
+    "Grêmio": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 0.0,
+      "xgPostPromedio": 2.71
+    },
+    "Guadalajara": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.61
+    },
+    "Hertha Berlin": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.608,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.38
+    },
+    "Instituto de Córdoba": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.326,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.67
+    },
+    "Internacional": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.06
+    },
+    "Ipswich Town": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.328,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 3.07
+    },
+    "Lanus": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.526,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.95
+    },
+    "Lazio": {
+      "liga": "soccer_italy_serie_a",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.233,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.03
+    },
+    "Lecce": {
+      "liga": "soccer_italy_serie_a",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.233,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.03
+    },
+    "Leeds United": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.528,
+      "golesPromedio": 5.0,
+      "xgPostPromedio": 3.1
+    },
+    "Middlesbrough": {
+      "liga": "soccer_efl_champ",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.128,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 1.88
+    },
+    "Monterrey": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 2,
+      "overs": 0,
+      "overRate": 0.169,
+      "golesPromedio": 1.5,
+      "xgPostPromedio": 2.38
+    },
+    "Nashville SC": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.87
+    },
+    "Necaxa": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.403,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 2.26
+    },
+    "New England Revolution": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.53
+    },
+    "Newcastle United": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.528,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.21
+    },
+    "Nottingham Forest": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.328,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 4.94
+    },
+    "Orlando City SC": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.376,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 4.56
+    },
+    "Pachuca": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.83
+    },
+    "Philadelphia Union": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.53
+    },
+    "Portland Timbers": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 3.97
+    },
+    "Portsmouth": {
+      "liga": "soccer_efl_champ",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.128,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.48
+    },
+    "Pumas": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.46
+    },
+    "Querétaro": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 2,
+      "overs": 1,
+      "overRate": 0.336,
+      "golesPromedio": 2.5,
+      "xgPostPromedio": 2.27
+    },
+    "Real Madrid": {
+      "liga": "soccer_spain_la_liga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.15,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 5.27
+    },
+    "Real Salt Lake": {
+      "liga": "soccer_usa_mls",
+      "partidos": 2,
+      "overs": 0,
+      "overRate": 0.147,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 3.62
+    },
+    "Remo": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.377,
+      "golesPromedio": 6.0,
+      "xgPostPromedio": 3.21
+    },
+    "River Plate": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.526,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.95
+    },
+    "Rosario Central": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.526,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.17
+    },
+    "SV Darmstadt 98": {
+      "liga": "soccer_germany_bundesliga2",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.608,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 2.69
+    },
+    "Santos": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.34
+    },
+    "Sao Paulo": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.177,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 1.73
+    },
+    "Seattle Sounders FC": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 4.07
+    },
+    "Stoke City": {
+      "liga": "soccer_efl_champ",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.128,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 1.5
+    },
+    "Sunderland": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.328,
+      "golesPromedio": 0.0,
+      "xgPostPromedio": 1.24
+    },
+    "Tigres": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 1.1
+    },
+    "Tijuana": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 1.0,
+      "xgPostPromedio": 2.85
+    },
+    "Toluca": {
+      "liga": "soccer_mexico_ligamx",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.203,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 2.83
+    },
+    "Tottenham Hotspur": {
+      "liga": "soccer_epl",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.328,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 3.07
+    },
+    "Vancouver Whitecaps FC": {
+      "liga": "soccer_usa_mls",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.176,
+      "golesPromedio": 2.0,
+      "xgPostPromedio": 3.18
+    },
+    "Vasco da Gama": {
+      "liga": "soccer_brazil_campeonato",
+      "partidos": 2,
+      "overs": 0,
+      "overRate": 0.147,
+      "golesPromedio": 2.5,
+      "xgPostPromedio": 2.61
+    },
+    "Velez Sarsfield BA": {
+      "liga": "soccer_argentina_primera_division",
+      "partidos": 1,
+      "overs": 1,
+      "overRate": 0.526,
+      "golesPromedio": 4.0,
+      "xgPostPromedio": 3.47
+    },
+    "VfB Stuttgart": {
+      "liga": "soccer_germany_bundesliga",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.281,
+      "golesPromedio": 0.0,
+      "xgPostPromedio": 4.29
+    },
+    "Willem II": {
+      "liga": "soccer_netherlands_eredivisie",
+      "partidos": 1,
+      "overs": 0,
+      "overRate": 0.192,
+      "golesPromedio": 3.0,
+      "xgPostPromedio": 2.66
+    }
+  }
+}
