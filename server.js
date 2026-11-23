@@ -16,7 +16,7 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const GOOGLE_SHEETS_WEBHOOK_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
 const GOOGLE_SHEETS_SECRETO = process.env.GOOGLE_SHEETS_SECRETO || 'cambia-este-secreto';
 
-// FotMob auto-fill (v4.10: solo FotMob, sin manual)
+// FotMob auto-fill
 const FOTMOB_ENABLED = process.env.FOTMOB_ENABLED !== 'false';
 const FOTMOB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const FOTMOB_HORAS_CRON = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22];
@@ -43,22 +43,30 @@ const CHECKPOINTS = [
 const LINEAS_A_RASTREAR = [1.5, 2.5, 3.5, 4.5];
 const LINEAS_XG = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.5, 7.5];
 const LINEA_PRINCIPAL = '3.5';
-const VERSION_REGLA = 'v4.10';
+const VERSION_REGLA = 'v4.11';
 
-const UMBRAL_ABORTO_CUOTA = 2.30;
-const UMBRAL_XG_24H_MIN = 2.10;
-const UMBRAL_XG_CONTRADICE = 2.60;
+// v4.11: Zona Dulce calibrada con historial real (evita trampa línea 3.0 y mega-favoritos)
+const UMBRAL_CUOTA_MIN = 1.72;
+const UMBRAL_ABORTO_CUOTA = 2.10;
+const UMBRAL_PROMETEDOR_CUOTA = 1.98;
+const UMBRAL_XG_24H_MIN = 3.55;
+const UMBRAL_XG_CONTRADICE = 3.70;
 const UMBRAL_CASAS_MIN = 3;
-const UMBRAL_CASAS_PEAJE = 5;
-const UMBRAL_SCORE_OVER = 60;  // v4.10: subido de 55 a 60
-const UMBRAL_PROMETEDOR_CUOTA = 2.05;
+const UMBRAL_CASAS_PEAJE = 4; // En regions=eu el máximo real para 3.5 es 4
+const UMBRAL_SCORE_OVER = 65;
+
+// Veto por deriva de mercado en contra
+const MAX_SUBIDA_CUOTA_CIERRE = 0.08;
+const MIN_MOV35_PERMITIDO = -1.5;
+const MIN_SENAL_PONDERADA_PERMITIDA = -1.5;
 
 const UMBRAL_PRIOR_OVER_RATE_MIN = 0.25;
 const UMBRAL_PRIOR_PARTIDOS_MIN = 8;
-const PREFILTRO_BULK_MIN_CANDIDATOS = 2;
-const PREFILTRO_BULK_CUOTA_MAX = 2.35;
+const PREFILTRO_BULK_MIN_CANDIDATOS = 1;
+const PREFILTRO_BULK_CUOTA_MIN = 1.68;
+const PREFILTRO_BULK_CUOTA_MAX = 2.15;
 
-const GAP_MINIMO_MS = (0 * 60 + 60) * 60000;
+const GAP_MINIMO_MS = 60 * 60000;
 const VENTANA_INICIO_MIN = 6 * 60;
 const VENTANA_FIN_MIN = 23 * 60 + 30;
 const OBJETIVO_MENSUAL_ACTIVOS = 120;
@@ -70,7 +78,6 @@ const VENTANA_REEMPLAZO_MS = 6 * 3600000;
 const MARGEN_PEAJE_REEMPLAZO_MS = 30 * 60000;
 const DELAY_PEAJE_ATRASADO_MS = 5000;
 
-// v4.10: alias para FotMob (name matching)
 const ALIASES_FOTMOB = {
   'hertha bsc': 'hertha berlin',
   'olympique marseille': 'marseille',
@@ -155,6 +162,12 @@ function ligaEsElegible(sportKey) {
   if ((info.partidos || 0) < UMBRAL_PRIOR_PARTIDOS_MIN) return true;
   if ((info.overRate || 0) < UMBRAL_PRIOR_OVER_RATE_MIN) return false;
   return true;
+}
+
+function obtenerPriorLiga(sportKey) {
+  const info = PRIORS?.porLiga?.[sportKey];
+  if (!info || (info.partidos || 0) < UMBRAL_PRIOR_PARTIDOS_MIN) return 0.35;
+  return info.overRate || 0.35;
 }
 
 // ==================================================================
@@ -375,7 +388,6 @@ async function autoCompletarMarcadores() {
       const commenceTime = new Date(p.commenceTime).getTime();
       const horasDesdeInicio = (ahora - commenceTime) / 3600000;
 
-      // v4.10: incluir SIN_APUESTA y ABORTADO y OVER
       const esCandidato =
         (p.estado === 'activo' && p.prediccionEnviada && horasDesdeInicio > FOTMOB_UMBRAL_HORAS) ||
         (p.estado === 'abortado' && horasDesdeInicio > FOTMOB_UMBRAL_HORAS);
@@ -712,7 +724,7 @@ async function obtenerCuotasTotales(sportKey, eventId, claveCheckpoint) {
 }
 
 // ==================================================================
-// CÁLCULOS
+// CÁLCULOS Y SCORING (v4.11)
 // ==================================================================
 
 function calcularXGPoisson(lineas) {
@@ -764,51 +776,63 @@ function lineaPrincipal(lineas) {
 }
 
 function scoreOver(p) {
-  let score = 0;
   const opening = p.cuotas['24h']?.lineas?.[LINEA_PRINCIPAL]?.over;
-  if (!opening) return 0;
+  const closing = p.cuotas['5m']?.lineas?.[LINEA_PRINCIPAL]?.over;
+  if (!opening || !closing) return 0;
 
-  if      (opening < 1.90) score += 60;
-  else if (opening < 2.05) score += 55;
-  else if (opening < 2.20) score += 45;
-  else if (opening < 2.30) score += 30;
-  else if (opening < 2.40) score += 15;
-  else                     return 0;
+  // 1. Vetos duros de estructura de mercado (bloquean trampa línea 3.0 y mega-favoritos)
+  if (p.lineaPrincipal24h !== 3.5) return 0;
+  if (p.lineaPrincipal5m !== null && p.lineaPrincipal5m < 3.5) return 0;
+  if (opening < UMBRAL_CUOTA_MIN || opening > UMBRAL_ABORTO_CUOTA) return 0;
 
-  const xg = (typeof p.xgCierre === 'number' && !isNaN(p.xgCierre)) ? p.xgCierre : null;
-  if (xg !== null) {
-    if      (xg >= 3.6) score += 25;
-    else if (xg >= 3.2) score += 15;
-    else if (xg >= 2.8) score += 5;
-    else if (xg <  2.4) score -= 20;
-  }
-
-  // v4.10: penalizar simétrico por sobre-reacción (antes solo positivo)
+  // 2. Veto duro por deriva en contra al cierre
   const mov = (typeof p.mov35Over === 'number' && !isNaN(p.mov35Over)) ? p.mov35Over : 0;
-  if (Math.abs(mov) < 1.5)          score += 10;
-  else if (mov > 1.5 && mov < 4.0)  score += 5;
-  else if (mov > 4.0)               score -= 25;
-  else if (mov < -4.0)              score -= 25;
-  else if (mov < -1.5)              score -= 10;
+  const senal = (typeof p.senalPonderada === 'number' && !isNaN(p.senalPonderada)) ? p.senalPonderada : 0;
+  if ((closing - opening) >= MAX_SUBIDA_CUOTA_CIERRE) return 0;
+  if (mov <= MIN_MOV35_PERMITIDO || senal <= MIN_SENAL_PONDERADA_PERMITIDA) return 0;
 
-  if (typeof p.deltaLineaPrincipal === 'number') {
-    if (p.deltaLineaPrincipal >= 0.5)       score += 10;
-    else if (p.deltaLineaPrincipal <= -0.5) score -= 5;
+  let score = 0;
+
+  // 3. Zona Dulce de apertura (1.72 - 2.10)
+  if (opening >= 1.72 && opening <= 1.98) score += 42;
+  else                                     score += 32;
+
+  // 4. xG Implícito de cierre + impulso respecto a apertura
+  const xg = (typeof p.xgCierre === 'number' && !isNaN(p.xgCierre)) ? p.xgCierre : null;
+  const xgAp = (typeof p.xgApertura === 'number' && !isNaN(p.xgApertura)) ? p.xgApertura : null;
+  if (xg !== null) {
+    if      (xg >= 4.10) score += 25;
+    else if (xg >= 3.85) score += 20;
+    else if (xg >= 3.70) score += 14;
+    else                 return 0;
+
+    if (xgAp !== null && xg > xgAp) score += 5;
   }
 
+  // 5. Movimiento del mercado (solo premia si es sostenido; penaliza deriva negativa)
+  if (p.sost35Over === true && mov >= 0.5)   score += 15;
+  else if (mov >= 0.0 && senal >= 0.0)       score += 6;
+  else if (mov < 0)                          score -= 6;
+
+  // 6. Subida de línea equilibrada (3.5 -> 4.0)
+  if (typeof p.deltaLineaPrincipal === 'number' && p.deltaLineaPrincipal >= 0.5) {
+    score += 10;
+  }
+
+  // 7. Alineación real con Pinnacle (rango real en historial: -0.09 a +0.04)
   if (typeof p.pinVentaja5m === 'number') {
-    if (p.pinVentaja5m > 0.15)        score += 8;
-    else if (p.pinVentaja5m < -0.15)  score -= 5;
+    if (p.pinVentaja5m >= -0.03)      score += 8;
+    else if (p.pinVentaja5m <= -0.06) score -= 8;
   }
 
-  if (p.casas35 >= 10)      score += 5;
-  else if (p.casas35 < 3)   score -= 10;
+  // 8. Penalización si la apertura de 24h fue recuperada tarde
+  if (p.recuperadoTarde) score -= 6;
 
   return Math.max(0, Math.min(100, score));
 }
 
 // ==================================================================
-// SELECCIÓN
+// SELECCIÓN Y PRIORIZACIÓN (v4.11)
 // ==================================================================
 
 function crearRegistroPartido(evento, diaLocal, etiqueta) {
@@ -830,6 +854,16 @@ function enVentanaHoraria(fechaIso) {
 
 function obtenerDiaLocal(fechaIso) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(fechaIso));
+}
+
+function calidadPreviaEvento(ev, prefiltro) {
+  const cuota = prefiltro[ev.id];
+  const prior = obtenerPriorLiga(ev.sportKey);
+  if (typeof cuota === 'number') {
+    const distanciaCentro = Math.abs(cuota - 1.90);
+    return (1 - Math.min(distanciaCentro, 0.5) * 2) * 100 + prior * 20;
+  }
+  return prior * 20;
 }
 
 async function buscarYProgramarPartidos() {
@@ -867,11 +901,11 @@ async function buscarYProgramarPartidos() {
     }
   }
 
+  // v4.11: filtra tanto cuotas altas (> 2.15) como mega-favoritos (< 1.68) antes de gastar créditos de 24h
   const candidatosFiltrados = candidatosA.filter(ev => {
     const overEstimado = prefiltro[ev.id];
-    if (overEstimado === undefined) return true;
-    if (overEstimado === null) return true;
-    return overEstimado < PREFILTRO_BULK_CUOTA_MAX;
+    if (overEstimado === undefined || overEstimado === null) return true;
+    return overEstimado >= PREFILTRO_BULK_CUOTA_MIN && overEstimado <= PREFILTRO_BULK_CUOTA_MAX;
   });
 
   const descartadosPorBulk = candidatosA.length - candidatosFiltrados.length;
@@ -881,8 +915,8 @@ async function buscarYProgramarPartidos() {
     return { ok: false, mensaje: 'Ningún partido pasó los filtros de priors/bulk.' };
   }
 
-  const anclaDelDia = candidatosFiltrados[0];
-  const diaSeleccionado = obtenerDiaLocal(anclaDelDia.commence_time);
+  const primerEvento = candidatosFiltrados[0];
+  const diaSeleccionado = obtenerDiaLocal(primerEvento.commence_time);
 
   return conBloqueoDB(async () => {
     const db = leerDB();
@@ -898,16 +932,18 @@ async function buscarYProgramarPartidos() {
     if (!db.contadorMes || db.contadorMes.mes !== mesActual) db.contadorMes = { mes: mesActual, activos: 0 };
     if (db.contadorMes.activos >= OBJETIVO_MENSUAL_ACTIVOS) return { bloqueado: true, mensaje: `Límite de ${OBJETIVO_MENSUAL_ACTIVOS} partidos ACTIVOS alcanzado.` };
 
-    const eventosDelDia = candidatosFiltrados.filter(e => obtenerDiaLocal(e.commence_time) === diaSeleccionado && new Date(e.commence_time).getTime() >= new Date(anclaDelDia.commence_time).getTime());
+    const eventosDelDia = candidatosFiltrados.filter(e => obtenerDiaLocal(e.commence_time) === diaSeleccionado);
     db.calendarioDia = eventosDelDia;
 
-    const seleccionados = [anclaDelDia];
-    let ultimoTiempo = new Date(anclaDelDia.commence_time).getTime();
-    for (const ev of eventosDelDia) {
-      if (ev.id === anclaDelDia.id) continue;
+    // v4.11: priorizar por calidad previa (cercanía a cuota 1.90 + prior de liga) respetando GAP_MINIMO_MS
+    const ordenadosPorCalidad = [...eventosDelDia].sort((a, b) => calidadPreviaEvento(b, prefiltro) - calidadPreviaEvento(a, prefiltro));
+    const seleccionados = [];
+    for (const ev of ordenadosPorCalidad) {
       const t = new Date(ev.commence_time).getTime();
-      if (t - ultimoTiempo >= GAP_MINIMO_MS) { seleccionados.push(ev); ultimoTiempo = t; }
+      const solapa = seleccionados.some(s => Math.abs(t - new Date(s.commence_time).getTime()) < GAP_MINIMO_MS);
+      if (!solapa) seleccionados.push(ev);
     }
+    seleccionados.sort((a, b) => new Date(a.commence_time) - new Date(b.commence_time));
 
     seleccionados.forEach((ev, i) => {
       const p = crearRegistroPartido(ev, diaSeleccionado, `P${i + 1}`);
@@ -917,7 +953,7 @@ async function buscarYProgramarPartidos() {
 
     guardarDB(db);
     const stats = `Priors: -${descartadosPorPriors}, Bulk: -${descartadosPorBulk}, ${ligasEscaneadas} ligas escaneadas`;
-    await enviarTelegram(`✅ ${seleccionados.length} partido(s) en cola.\n${stats}`);
+    await enviarTelegram(`✅ ${seleccionados.length} partido(s) en cola (${VERSION_REGLA}).\n${stats}`);
     return { ok: true, mensaje: `${seleccionados.length} en cola. ${stats}` };
   });
 }
@@ -1010,11 +1046,15 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
     if (cpClave === '24h') {
       const over24h = p.cuotas['24h'].lineas[LINEA_PRINCIPAL]?.over;
       const xg24h = calcularXGPoisson(p.cuotas['24h'].lineas);
+      const l24h = lineaPrincipal(p.cuotas['24h'].lineas);
       const casas24h = datos.cantidadCasas;
 
+      // v4.11: exige línea principal 24h en 3.5 y cuota dentro de [1.72, 2.10]
       const esDescarte =
         !over24h ||
-        over24h >= UMBRAL_ABORTO_CUOTA ||
+        l24h !== 3.5 ||
+        over24h < UMBRAL_CUOTA_MIN ||
+        over24h > UMBRAL_ABORTO_CUOTA ||
         (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ||
         casas24h < UMBRAL_CASAS_MIN;
 
@@ -1023,7 +1063,9 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
         p.nivelPeaje = 'DESCARTE';
         limpiarJobsPartido(matchId);
         const motivo = !over24h ? 'sin cuota' :
-                       over24h >= UMBRAL_ABORTO_CUOTA ? `cuota ${over24h}` :
+                       l24h !== 3.5 ? `linea24h ${l24h}` :
+                       over24h < UMBRAL_CUOTA_MIN ? `cuota_baja ${over24h}` :
+                       over24h > UMBRAL_ABORTO_CUOTA ? `cuota_alta ${over24h}` :
                        (typeof xg24h === 'number' && xg24h < UMBRAL_XG_24H_MIN) ? `xG ${xg24h}` :
                        `casas ${casas24h}`;
         p.motivoAborto = motivo;
@@ -1045,9 +1087,10 @@ async function ejecutarChequeo(matchId, cpClave, recuperadoTarde) {
         }
       } else {
         const esPrometedor =
-          over24h < UMBRAL_PROMETEDOR_CUOTA &&
-          (typeof xg24h === 'number' && xg24h >= 3.20) &&
-          casas24h >= UMBRAL_CASAS_PEAJE;
+          over24h <= UMBRAL_PROMETEDOR_CUOTA &&
+          (typeof xg24h === 'number' && xg24h >= 3.85) &&
+          casas24h >= UMBRAL_CASAS_PEAJE &&
+          !recuperadoTarde;
 
         p.estado = 'activo';
         p.nivelPeaje = esPrometedor ? 'PROMETEDOR' : 'CANDIDATO';
@@ -1145,12 +1188,19 @@ async function ejecutarPrediccion(matchId) {
 
       p.scoreOver = scoreOver(p);
 
-      const aperturaMala = p.cuotaOverApertura >= UMBRAL_ABORTO_CUOTA;
+      const lineaNo35 = p.lineaPrincipal24h !== 3.5 || (p.lineaPrincipal5m !== null && p.lineaPrincipal5m < 3.5);
+      const aperturaFueraRango = p.cuotaOverApertura < UMBRAL_CUOTA_MIN || p.cuotaOverApertura > UMBRAL_ABORTO_CUOTA;
+      const derivaEnContra =
+        (p.cuotaOverCierre - p.cuotaOverApertura) >= MAX_SUBIDA_CUOTA_CIERRE ||
+        (typeof p.mov35Over === 'number' && p.mov35Over <= MIN_MOV35_PERMITIDO) ||
+        (typeof p.senalPonderada === 'number' && p.senalPonderada <= MIN_SENAL_PONDERADA_PERMITIDA);
       const xgContradice = typeof p.xgCierre === 'number' && p.xgCierre < UMBRAL_XG_CONTRADICE;
       const puntosInsuficientes = clavesDisp.length < 2;
       const scoreSuficiente = p.scoreOver >= UMBRAL_SCORE_OVER;
 
-      if (aperturaMala) motivo = 'apertura_mala';
+      if (lineaNo35) motivo = 'linea_no_35';
+      else if (aperturaFueraRango) motivo = 'apertura_fuera_rango';
+      else if (derivaEnContra) motivo = 'deriva_en_contra';
       else if (xgContradice) motivo = 'xg_contradice';
       else if (puntosInsuficientes) motivo = 'puntos_insuficientes';
       else if (!scoreSuficiente) motivo = `score_${p.scoreOver}`;
@@ -1309,10 +1359,8 @@ app.post('/api/backfill', async (req, res) => {
   }
 });
 
-// v4.10: forzar cierre de partidos atascados
 app.post('/api/forzar-cierre', async (req, res) => {
   try {
-    // Primero intentar FotMob
     let fotmobResult = { completados: 0, candidatos: 0 };
     if (FOTMOB_ENABLED) {
       try {
@@ -1322,7 +1370,6 @@ app.post('/api/forzar-cierre', async (req, res) => {
       }
     }
 
-    // Luego cleanup agresivo
     const minHoras = parseFloat(req.query.minHoras) || 4;
     const result = await conBloqueoDB(async () => {
       const db = leerDB();
